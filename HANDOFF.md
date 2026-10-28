@@ -121,6 +121,14 @@ Working title: **DNS: The Reckoning**. Player is an IT tech who fights office eq
 - Sound stubs (AudioContext beeps/noise for shots, enemy hits, explosions, death)
 - ~~HUD flavor: kill counter labeled "TICKETS CLOSED"~~ (done in Chunk 3)
 
+### Chunk 7 — Balance & ammo UX (after Chunk 6)
+From play-test round 2 (user feedback after Chunk 5):
+- **More ammo before the boss.** Players reach the arena short on ammo. Raise drop rates/amounts from regular enemies (currently 60% chance of +4 tickets) and/or place more ticket/closure pickups along the route (especially the Server Room).
+- **Boss fight resupply from phase 2.** Once the DNS enters phase 2, periodically spawn HP (coffee) and ammo (tickets/closures) pickups in the arena — e.g. on a timer at random `ARENA_CELLS` away from the boss, with a spawn effect and cap on how many are on the floor. (Shadow IT add drops alone aren't enough.)
+- **Make "out of ammo" obvious.** Right now firing on empty silently does nothing. Add a clear on-screen alert (flashing "OUT OF TICKETS" / "OUT OF CLOSURES", red ammo counter pulse, maybe a dry-fire click once sound exists).
+- **Auto-switch weapon when empty**, with an on-screen alert (e.g. "CLOSURES EMPTY — SWITCHING TO KEYBOARD"). Only switch if the other weapon has ammo; if both are empty, show "NO AMMO" instead.
+- **HUD weapon-switch hints.** Make it obvious you can switch: show both weapon slots with key labels (1 / 2) and their ammo counts, highlight the active one, and dim/strike a slot that's empty or not owned. (Current hint is a faint `[1] keyboard 2 cannon` line under the weapon label.)
+
 **Balance to watch:** two awake enemies take ~60 HP in a few seconds if you stand still. Coffee pickups now offset this; tune `INK_DMG`, router burst damage or coffee count after a real play-through.
 
 ---
