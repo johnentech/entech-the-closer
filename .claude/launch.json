@@ -3,8 +3,8 @@
   "configurations": [
     {
       "name": "dns-reckoning",
-      "runtimeExecutable": "npx",
-      "runtimeArgs": ["--yes", "http-server", "-p", "5180", "-c-1", "-s"],
+      "runtimeExecutable": "node",
+      "runtimeArgs": ["serve.js"],
       "port": 5180
     }
   ]

@@ -12,7 +12,7 @@
 </head>
 <body>
 <canvas id="game"></canvas>
-<div id="controls">W/S: move &nbsp;|&nbsp; A/D: strafe &nbsp;|&nbsp; ←/→: turn &nbsp;|&nbsp; Click: mouse look &nbsp;|&nbsp; M: toggle map</div>
+<div id="controls">W/S: move &nbsp;|&nbsp; A/D: strafe &nbsp;|&nbsp; ←/→: turn &nbsp;|&nbsp; Click: mouse look / fire &nbsp;|&nbsp; Space: fire &nbsp;|&nbsp; M: toggle map</div>
 <script>
 const SCREEN_W = 800;
 const SCREEN_H = 500;
@@ -60,6 +60,7 @@ const canvas = document.getElementById('game');
 const ctx = canvas.getContext('2d');
 canvas.width  = SCREEN_W;
 canvas.height = SCREEN_H;
+ctx.imageSmoothingEnabled = false; // crisp pixel sprites
 
 // Player
 const player = {
@@ -68,13 +69,17 @@ const player = {
   planeX: 0, planeY: FOV_PLANE,
 };
 
-// Z-buffer (for sprite depth testing later)
+// Z-buffer (perpWallDist per column, used for sprite depth testing)
 const zBuf = new Float64Array(SCREEN_W);
 
 // Game state
 const game = {
   health: 100, maxHealth: 100,
   ammo: 25,    maxAmmo:   25,
+  kills: 0,
+  hurt: 0,      // red damage flash, 1 → 0
+  pickup: 0,    // green pickup flash, 1 → 0
+  over: false,  // player dead
 };
 
 // Weapon state
@@ -86,8 +91,428 @@ const weapon = {
   kickY:   0,      // positive = pushed down off-screen
   flash:   0,
 };
-const PELLETS = 7;
-const SPREAD  = 0.09;
+const PELLETS    = 7;
+const SPREAD     = 0.09;
+const PELLET_DMG = 9;
+
+// --- Textures (procedural, drawn once into offscreen canvases) ---
+function makeTex(w, h, draw) {
+  const c = document.createElement('canvas');
+  c.width = w; c.height = h;
+  const g = c.getContext('2d');
+  const R = (color, x, y, rw, rh) => { g.fillStyle = color; g.fillRect(x, y, rw, rh); };
+  draw(g, R);
+  return c;
+}
+
+// Copy of a texture with a solid color washed over its opaque pixels (hit/pain flash)
+function tintTex(src, color, alpha) {
+  return makeTex(src.width, src.height, g => {
+    g.drawImage(src, 0, 0);
+    g.globalCompositeOperation = 'source-atop';
+    g.globalAlpha = alpha;
+    g.fillStyle = color;
+    g.fillRect(0, 0, src.width, src.height);
+  });
+}
+
+function drawPrinter(g, R, frame) {
+  const step = frame === 'walk1' ? 2 : 0;
+  const atk  = frame === 'attack';
+  // Stubby legs
+  R('#2a2a2a', 10 + step, 38, 7, 6);
+  R('#2a2a2a', 31 - step, 38, 7, 6);
+  // Paper in the input tray
+  R('#f4f4f4', 13, 1, 22, 9);
+  R('#cfcfcf', 13, 3, 22, 1);
+  R('#cfcfcf', 13, 6, 22, 1);
+  R('#8d897f', 9, 8, 30, 6);
+  // Body
+  R('#d9d5ca', 3, 13, 42, 26);
+  R('#efece4', 3, 13, 42, 2);
+  R('#b4afa2', 3, 34, 42, 5);
+  R('#9d998e', 3, 13, 2, 26);
+  R('#9d998e', 43, 13, 2, 26);
+  // Status display — goes red when it's about to print on you
+  R('#2c2c2c', 32, 15, 10, 7);
+  R(atk ? '#ff3b3b' : '#3dff73', 33, 16, 8, 5);
+  // Angry status-LED eyes
+  const eye = atk ? '#ffd0d0' : '#ff2a2a';
+  R(eye, 8, 18, 6, 4);
+  R(eye, 19, 18, 6, 4);
+  R('#222', 7, 16, 4, 1); R('#222', 10, 17, 4, 1);
+  R('#222', 22, 16, 4, 1); R('#222', 19, 17, 4, 1);
+  // Output-slot mouth
+  if (atk) {
+    R('#14081c', 7, 24, 34, 11);
+    for (let i = 0; i < 8; i++) R('#fff', 8 + i * 4, 24, 2, 3);
+    for (let i = 0; i < 7; i++) R('#fff', 10 + i * 4, 32, 2, 3);
+    g.fillStyle = '#5a1f8a';
+    g.beginPath(); g.arc(24, 29, 4, 0, Math.PI * 2); g.fill();
+    R('#b77ce6', 22, 27, 2, 1);
+  } else {
+    R('#14081c', 7, 26, 34, 5);
+    for (let i = 0; i < 8; i++) R('#fff', 8 + i * 4, 26, 2, 2);
+    R('#f4f4f4', 18, 29, 12, 6);
+    R('#cfcfcf', 18, 31, 12, 1);
+  }
+}
+
+function drawPrinterDead(g, R) {
+  g.fillStyle = '#2d1045';
+  g.beginPath(); g.ellipse(24, 41, 22, 3, 0, 0, Math.PI * 2); g.fill();
+  R('#b4afa2', 6, 33, 36, 9);
+  R('#d9d5ca', 6, 33, 36, 3);
+  R('#555', 16, 34, 1, 7); R('#555', 17, 37, 6, 1); R('#555', 31, 35, 1, 6);
+  R('#14081c', 10, 38, 28, 2);
+  R('#550000', 12, 36, 4, 1);
+  R('#f4f4f4', 0, 39, 8, 4);
+  R('#f4f4f4', 39, 36, 9, 5);
+  R('#cfcfcf', 39, 38, 9, 1);
+}
+
+function drawRouter(g, R, frame) {
+  const step = frame === 'walk1' ? 2 : 0;
+  const atk  = frame === 'attack';
+  // Antennas
+  for (const ax of [6, 19, 32]) {
+    if (atk) {
+      g.fillStyle = 'rgba(255,230,80,0.45)';
+      g.beginPath(); g.arc(ax + 1, 2, 4, 0, Math.PI * 2); g.fill();
+    }
+    R('#1d1d1d', ax, 3, 2, 15);
+    R(atk ? '#ffe14a' : '#555', ax - 1, 0, 4, 3);
+  }
+  // Body
+  R('#202226', 1, 17, 38, 14);
+  R('#33363c', 1, 17, 38, 2);
+  R('#121316', 1, 29, 38, 2);
+  // Angry amber eyes (inner corners cut low)
+  const eye = atk ? '#fff0a0' : '#ffae00';
+  R(eye, 8, 20, 6, 3);  R('#202226', 12, 20, 2, 1);
+  R(eye, 26, 20, 6, 3); R('#202226', 26, 20, 2, 1);
+  // Link LEDs — blink while walking, all red when firing
+  for (let i = 0; i < 6; i++) {
+    const on = (i + (frame === 'walk1' ? 1 : 0)) % 2 === 0;
+    R(atk ? '#ff4040' : on ? '#3dff73' : '#14401f', 6 + i * 5, 25, 3, 2);
+  }
+  // Rubber feet
+  R('#111', 4 + step, 31, 6, 4);
+  R('#111', 30 - step, 31, 6, 4);
+}
+
+function drawRouterDead(g, R) {
+  g.fillStyle = 'rgba(120,120,120,0.35)';
+  g.beginPath(); g.arc(18, 18, 5, 0, Math.PI * 2); g.fill();
+  g.beginPath(); g.arc(22, 11, 4, 0, Math.PI * 2); g.fill();
+  R('#202226', 4, 27, 32, 9);
+  R('#33363c', 4, 27, 32, 2);
+  R('#14401f', 9, 31, 3, 2); R('#14401f', 15, 31, 3, 2); R('#14401f', 21, 31, 3, 2);
+  R('#1d1d1d', 0, 33, 10, 2);
+  R('#1d1d1d', 31, 30, 9, 2);
+  R('#ffe14a', 19, 25, 2, 2);
+}
+
+function drawShadow(g, R, frame) {
+  const step = frame === 'walk1' ? 3 : 0;
+  const atk  = frame === 'attack';
+  // Legs
+  R('#120c1c', 13 - step, 46, 7, 14);
+  R('#120c1c', 24 + step, 46, 7, 14);
+  // Hoodie
+  g.fillStyle = '#1d1430';
+  g.beginPath(); g.moveTo(8, 22); g.lineTo(36, 22); g.lineTo(40, 48); g.lineTo(4, 48); g.closePath(); g.fill();
+  R('#150e24', 21, 27, 2, 20);
+  // Arms — raised and grabbing when attacking
+  if (atk) { R('#1d1430', 1, 12, 7, 20); R('#1d1430', 36, 12, 7, 20); R('#2b1f45', 0, 9, 9, 4); R('#2b1f45', 35, 9, 9, 4); }
+  else     { R('#1d1430', 2, 26, 6, 18); R('#1d1430', 36, 26, 6, 18); }
+  // Hood + face void
+  g.fillStyle = '#24193a';
+  g.beginPath(); g.ellipse(22, 16, 11, 13, 0, 0, Math.PI * 2); g.fill();
+  g.fillStyle = '#07040c';
+  g.beginPath(); g.ellipse(22, 18, 7, 8, 0, 0, Math.PI * 2); g.fill();
+  // Glowing eyes
+  g.fillStyle = atk ? 'rgba(255,92,255,0.5)' : 'rgba(176,64,255,0.35)';
+  g.beginPath(); g.arc(18, 18, 3.5, 0, Math.PI * 2); g.arc(26, 18, 3.5, 0, Math.PI * 2); g.fill();
+  R(atk ? '#ff5cff' : '#b040ff', 17, 17, 3, 2);
+  R(atk ? '#ff5cff' : '#b040ff', 25, 17, 3, 2);
+  // Unsanctioned personal device
+  const px = 36, py = atk ? 3 : 42;
+  R('#0a0a0a', px, py, 6, 9);
+  R('#6fd3ff', px + 1, py + 1, 4, 6);
+}
+
+function drawShadowDead(g, R) {
+  g.fillStyle = '#1d1430';
+  g.beginPath(); g.ellipse(20, 55, 18, 5, 0, 0, Math.PI * 2); g.fill();
+  g.fillStyle = '#24193a';
+  g.beginPath(); g.ellipse(10, 52, 8, 5, 0, 0, Math.PI * 2); g.fill();
+  R('#4a1a6a', 8, 52, 2, 1); R('#4a1a6a', 12, 52, 2, 1);
+  R('#0a0a0a', 34, 53, 9, 6);
+  R('#6fd3ff', 35, 54, 7, 4);
+}
+
+function enemyTexSet(w, h, draw, drawDead) {
+  const set = {
+    walk0:  makeTex(w, h, (g, R) => draw(g, R, 'walk0')),
+    walk1:  makeTex(w, h, (g, R) => draw(g, R, 'walk1')),
+    attack: makeTex(w, h, (g, R) => draw(g, R, 'attack')),
+    dead:   makeTex(w, h, drawDead),
+  };
+  set.pain = tintTex(set.walk0, '#ffffff', 0.55);
+  return set;
+}
+
+const TEX = {
+  printer: enemyTexSet(48, 44, drawPrinter, drawPrinterDead),
+  router:  enemyTexSet(40, 36, drawRouter,  drawRouterDead),
+  shadow:  enemyTexSet(44, 60, drawShadow,  drawShadowDead),
+  ink: makeTex(16, 16, g => {
+    const grad = g.createRadialGradient(6, 6, 1, 8, 8, 8);
+    grad.addColorStop(0, '#b77ce6');
+    grad.addColorStop(0.4, '#5a1f8a');
+    grad.addColorStop(1, 'rgba(30,8,50,0)');
+    g.fillStyle = grad;
+    g.fillRect(0, 0, 16, 16);
+  }),
+  tickets: makeTex(24, 18, (g, R) => {
+    R('#d8d8d8', 3, 6, 19, 11);
+    R('#f4f4f4', 1, 4, 19, 11);
+    R('#ffffff', 2, 2, 19, 11);
+    R('#cfcfcf', 4, 5, 13, 1); R('#cfcfcf', 4, 8, 13, 1);
+    R('#ffd23a', 14, 0, 8, 7);
+    R('#c49a00', 16, 3, 4, 1);
+  }),
+};
+
+// --- Enemies ---
+// speed in tiles/frame; ranges in tiles; scale = sprite height as fraction of wall height
+const ENEMY_TYPES = {
+  printer: { hp: 60,  speed: 0.022, radius: 0.35, scale: 0.55, sight: 12, stopDist: 1.0,
+             attackRange: 9,    meleeRange: 1.2,  meleeDmg: 12, ranged: 'ink',
+             windupMs: 450, cooldownMs: 1900, painChance: 0.5 },
+  router:  { hp: 30,  speed: 0.014, radius: 0.3,  scale: 0.42, sight: 11, stopDist: 1.0,
+             attackRange: 9,    meleeRange: 0,    meleeDmg: 0,  ranged: 'burst',
+             windupMs: 550, cooldownMs: 2100, painChance: 0.7 },
+  shadow:  { hp: 150, speed: 0.065, radius: 0.4,  scale: 0.8,  sight: 20, stopDist: 0.7,
+             attackRange: 1.15, meleeRange: 1.15, meleeDmg: 15, ranged: null,
+             windupMs: 220, cooldownMs: 850,  painChance: 0.25 },
+};
+const INK_SPEED = 0.07;
+const INK_DMG   = 10;
+
+const enemies     = [];
+const projectiles = []; // { x, y, dx, dy, dmg }
+const pickups     = []; // { x, y, amount }
+
+function spawnEnemy(type, x, y) {
+  const e = {
+    type, def: ENEMY_TYPES[type], x, y,
+    hp: ENEMY_TYPES[type].hp,
+    state: 'idle', // idle | chase | windup | pain | dead
+    sees: false,
+    nextAttackAt: 0, windupUntil: 0, painUntil: 0, hitUntil: 0,
+    walkT: 0,
+  };
+  enemies.push(e);
+  return e;
+}
+
+// Printers patrol the cubicle farm; Rogue Routers hold the server room.
+// Shadow IT is spawned only by the DNS boss (Chunk 5).
+spawnEnemy('printer', 10.5, 4.5);
+spawnEnemy('printer', 17.5, 1.5);
+spawnEnemy('printer', 21.5, 8.5);
+spawnEnemy('printer', 13.5, 8.5);
+spawnEnemy('router',   8.5, 12.5);
+spawnEnemy('router',  13.5, 16.5);
+spawnEnemy('router',  20.5, 14.5);
+spawnEnemy('router',   5.5, 18.5);
+
+function wake(e, now) {
+  if (e.state !== 'idle') return;
+  e.state = 'chase';
+  e.nextAttackAt = now + 400 + Math.random() * 600;
+}
+
+function damageEnemy(e, dmg, now) {
+  if (e.state === 'dead') return;
+  e.hp -= dmg;
+  e.hitUntil = now + 90;
+  if (e.hp <= 0) {
+    e.state = 'dead';
+    game.kills++;
+    if (Math.random() < 0.6) pickups.push({ x: e.x, y: e.y, amount: 4 });
+    return;
+  }
+  wake(e, now);
+  if (Math.random() < e.def.painChance) {
+    e.state = 'pain';
+    e.painUntil = now + 220;
+  }
+}
+
+// Gunfire wakes enemies that can see you, or are close enough to hear it
+function alertEnemies(now) {
+  for (const e of enemies) {
+    if (e.state !== 'idle') continue;
+    const d = Math.hypot(player.x - e.x, player.y - e.y);
+    if (d < 5 || (d < 10 && hasLOS(e.x, e.y, player.x, player.y))) wake(e, now);
+  }
+}
+
+function hurtPlayer(dmg) {
+  if (game.over) return;
+  game.health = Math.max(0, game.health - dmg);
+  game.hurt = 1;
+  if (game.health === 0) {
+    game.over = true;
+    if (document.pointerLockElement) document.exitPointerLock();
+  }
+}
+
+function enemyAttack(e, dist) {
+  const d = e.def;
+  if (!e.sees) return; // lost sight during windup
+  if (d.meleeDmg && dist <= d.meleeRange) {
+    hurtPlayer(Math.round(d.meleeDmg * (0.8 + Math.random() * 0.4)));
+    return;
+  }
+  if (d.ranged === 'ink') {
+    const dx = (player.x - e.x) / dist, dy = (player.y - e.y) / dist;
+    projectiles.push({ x: e.x + dx * 0.4, y: e.y + dy * 0.4, dx: dx * INK_SPEED, dy: dy * INK_SPEED, dmg: INK_DMG });
+  } else if (d.ranged === 'burst') {
+    // 3-pellet hitscan burst; accuracy falls off with range
+    const hitChance = Math.min(0.85, Math.max(0.2, 1 - dist / 12));
+    let dmg = 0;
+    for (let i = 0; i < 3; i++) if (Math.random() < hitChance) dmg += 3 + (Math.random() * 3 | 0);
+    if (dmg) hurtPlayer(dmg);
+  }
+}
+
+// Flow field: BFS distance from the player's cell, rebuilt when the player changes cell.
+// Enemies without line of sight walk downhill on it to path around walls.
+const flow = new Int16Array(MAP_W * MAP_H);
+let flowCell = -1;
+const NEIGHBORS = [[1,0],[-1,0],[0,1],[0,-1],[1,1],[1,-1],[-1,1],[-1,-1]];
+
+function updateFlow() {
+  const px = Math.floor(player.x), py = Math.floor(player.y);
+  const cell = py * MAP_W + px;
+  if (cell === flowCell) return;
+  flowCell = cell;
+  flow.fill(-1);
+  flow[cell] = 0;
+  const queue = [cell];
+  for (let qi = 0; qi < queue.length; qi++) {
+    const c = queue[qi], cx = c % MAP_W, cy = (c / MAP_W) | 0;
+    for (const [ox, oy] of NEIGHBORS) {
+      const nx = cx + ox, ny = cy + oy;
+      if (isWall(nx, ny)) continue;
+      if (ox && oy && (isWall(cx + ox, cy) || isWall(cx, cy + oy))) continue; // no corner cutting
+      const n = ny * MAP_W + nx;
+      if (flow[n] !== -1) continue;
+      flow[n] = flow[c] + 1;
+      queue.push(n);
+    }
+  }
+}
+
+function stepToward(e) {
+  let tx = player.x, ty = player.y;
+  if (!e.sees) {
+    const cx = Math.floor(e.x), cy = Math.floor(e.y);
+    let best = flow[cy * MAP_W + cx];
+    if (best < 0) return; // unreachable
+    for (const [ox, oy] of NEIGHBORS) {
+      const nx = cx + ox, ny = cy + oy;
+      if (isWall(nx, ny)) continue;
+      if (ox && oy && (isWall(cx + ox, cy) || isWall(cx, cy + oy))) continue;
+      const v = flow[ny * MAP_W + nx];
+      if (v >= 0 && v < best) { best = v; tx = nx + 0.5; ty = ny + 0.5; }
+    }
+  }
+  const dx = tx - e.x, dy = ty - e.y;
+  const len = Math.hypot(dx, dy);
+  if (len < 0.01) return;
+  tryMove(e, dx / len * e.def.speed, dy / len * e.def.speed, 0.25);
+  e.walkT++;
+}
+
+function updateEnemies(now) {
+  updateFlow();
+  for (const e of enemies) {
+    if (e.state === 'dead') continue;
+    const dist = Math.hypot(player.x - e.x, player.y - e.y);
+    e.sees = dist < e.def.sight && hasLOS(e.x, e.y, player.x, player.y);
+
+    switch (e.state) {
+      case 'idle':
+        if (e.sees) wake(e, now);
+        break;
+      case 'pain':
+        if (now >= e.painUntil) e.state = 'chase';
+        break;
+      case 'chase':
+        if (e.sees && dist <= e.def.attackRange && now >= e.nextAttackAt) {
+          e.state = 'windup';
+          e.windupUntil = now + e.def.windupMs;
+        } else if (dist > e.def.stopDist) {
+          stepToward(e);
+        }
+        break;
+      case 'windup':
+        if (now >= e.windupUntil) {
+          enemyAttack(e, dist);
+          e.state = 'chase';
+          e.nextAttackAt = now + e.def.cooldownMs * (0.7 + Math.random() * 0.6);
+        }
+        break;
+    }
+  }
+
+  // Keep living enemies from stacking on each other or on the player
+  const alive = enemies.filter(e => e.state !== 'dead');
+  for (let i = 0; i < alive.length; i++) {
+    const a = alive[i];
+    for (let j = i + 1; j < alive.length; j++) {
+      const b = alive[j];
+      const dx = b.x - a.x, dy = b.y - a.y, d = Math.hypot(dx, dy);
+      if (d > 0.001 && d < 0.5) {
+        const push = (0.5 - d) / 2;
+        tryMove(a, -dx / d * push, -dy / d * push, 0.25);
+        tryMove(b,  dx / d * push,  dy / d * push, 0.25);
+      }
+    }
+    const dx = a.x - player.x, dy = a.y - player.y, d = Math.hypot(dx, dy);
+    const min = a.def.radius + COLLIDE;
+    if (d > 0.001 && d < min) tryMove(a, dx / d * (min - d), dy / d * (min - d), 0.25);
+  }
+}
+
+function updateProjectiles() {
+  for (let i = projectiles.length - 1; i >= 0; i--) {
+    const p = projectiles[i];
+    p.x += p.dx; p.y += p.dy;
+    if (isWall(p.x, p.y)) { projectiles.splice(i, 1); continue; }
+    if (Math.hypot(player.x - p.x, player.y - p.y) < 0.35) {
+      hurtPlayer(p.dmg);
+      projectiles.splice(i, 1);
+    }
+  }
+}
+
+function updatePickups() {
+  for (let i = pickups.length - 1; i >= 0; i--) {
+    const k = pickups[i];
+    if (game.ammo >= game.maxAmmo) continue;
+    if (Math.hypot(player.x - k.x, player.y - k.y) < 0.5) {
+      game.ammo = Math.min(game.maxAmmo, game.ammo + k.amount);
+      game.pickup = 1;
+      pickups.splice(i, 1);
+    }
+  }
+}
 
 // Input
 const keys = {};
@@ -98,12 +523,13 @@ let showMap = true;
 document.addEventListener('keydown', e => {
   if (e.code === 'KeyM') showMap = !showMap;
   if (e.code === 'Space') shoot();
+  if (e.code === 'KeyR' && game.over) location.reload();
 });
 
 // Pointer lock — left-click acquires lock; once locked, fires weapon
 let mouseDX = 0;
 canvas.addEventListener('mousedown', e => {
-  if (e.button !== 0) return;
+  if (e.button !== 0 || game.over) return;
   if (document.pointerLockElement !== canvas) canvas.requestPointerLock();
   else shoot();
 });
@@ -113,19 +539,35 @@ document.addEventListener('mousemove', e => {
 
 // --- Shoot ---
 function shoot() {
-  if (weapon.state !== 'idle' || game.ammo <= 0) return;
+  if (game.over || weapon.state !== 'idle' || game.ammo <= 0) return;
+  const now = performance.now();
   game.ammo--;
   weapon.state  = 'firing';
-  weapon.fireAt = performance.now();
+  weapon.fireAt = now;
   weapon.kickY  = 0;
   weapon.flash  = 1.0;
-  // Hitscan stubs — enemy hooks attach here in Chunk 3
+
+  // Each pellet is a hitscan ray: nearest enemy in front of the wall takes the hit.
+  // Damage is summed per enemy so one blast = one pain roll.
+  const hits = new Map();
   for (let i = 0; i < PELLETS; i++) {
-    const spread = (Math.random() - 0.5) * 2 * SPREAD;
-    const rayDX  = player.dirX + (player.planeX + spread) * 0;
-    // full ray cast with spread will damage enemies; placeholder for now
-    void rayDX;
+    const a  = (Math.random() - 0.5) * 2 * SPREAD;
+    const c  = Math.cos(a), s = Math.sin(a);
+    const dx = player.dirX * c - player.dirY * s;
+    const dy = player.dirX * s + player.dirY * c;
+    let bestT = castRay(player.x, player.y, dx, dy);
+    let best  = null;
+    for (const e of enemies) {
+      if (e.state === 'dead') continue;
+      const ex = e.x - player.x, ey = e.y - player.y;
+      const t  = ex * dx + ey * dy;            // distance along the ray
+      if (t <= 0 || t >= bestT) continue;
+      if (Math.abs(ex * dy - ey * dx) < e.def.radius) { best = e; bestT = t; }
+    }
+    if (best) hits.set(best, (hits.get(best) || 0) + PELLET_DMG);
   }
+  for (const [e, dmg] of hits) damageEnemy(e, dmg, now);
+  alertEnemies(now);
 }
 
 // --- Helpers ---
@@ -133,6 +575,53 @@ function isWall(x, y) {
   const mx = Math.floor(x), my = Math.floor(y);
   if (mx < 0 || mx >= MAP_W || my < 0 || my >= MAP_H) return true;
   return MAP[my][mx] > 0;
+}
+
+// DDA march from (ox,oy) along (dx,dy). Returns distance in ray-parameter units:
+// perpendicular distance for camera rays, true distance when (dx,dy) is normalized.
+// Sets rayHit (wall type) and raySide (0 = EW face, 1 = NS face).
+let rayHit = 0, raySide = 0;
+function castRay(ox, oy, dx, dy) {
+  let mapX = Math.floor(ox);
+  let mapY = Math.floor(oy);
+
+  const ddX = dx === 0 ? 1e30 : Math.abs(1 / dx);
+  const ddY = dy === 0 ? 1e30 : Math.abs(1 / dy);
+
+  let stepX, stepY, sdX, sdY;
+  if (dx < 0) { stepX = -1; sdX = (ox - mapX) * ddX; }
+  else        { stepX =  1; sdX = (mapX + 1 - ox) * ddX; }
+  if (dy < 0) { stepY = -1; sdY = (oy - mapY) * ddY; }
+  else        { stepY =  1; sdY = (mapY + 1 - oy) * ddY; }
+
+  let hit = 0, side = 0;
+  while (!hit) {
+    if (sdX < sdY) { sdX += ddX; mapX += stepX; side = 0; }
+    else           { sdY += ddY; mapY += stepY; side = 1; }
+    if (mapX < 0 || mapX >= MAP_W || mapY < 0 || mapY >= MAP_H) hit = 1;
+    else hit = MAP[mapY][mapX];
+  }
+  rayHit = hit; raySide = side;
+  return side === 0 ? sdX - ddX : sdY - ddY;
+}
+
+function hasLOS(ax, ay, bx, by) {
+  const dx = bx - ax, dy = by - ay;
+  const d = Math.hypot(dx, dy);
+  if (d < 1e-6) return true;
+  return castRay(ax, ay, dx / d, dy / d) >= d;
+}
+
+// Slide-based collision: move each axis independently if the leading edge is clear
+function tryMove(o, mx, my, r) {
+  const nx = o.x + mx;
+  const ny = o.y + my;
+  if (!isWall(nx + Math.sign(mx) * r, o.y) &&
+      !isWall(nx + Math.sign(mx) * r, o.y + r) &&
+      !isWall(nx + Math.sign(mx) * r, o.y - r)) o.x = nx;
+  if (!isWall(o.x, ny + Math.sign(my) * r) &&
+      !isWall(o.x + r, ny + Math.sign(my) * r) &&
+      !isWall(o.x - r, ny + Math.sign(my) * r)) o.y = ny;
 }
 
 function rotate(angle) {
@@ -146,10 +635,14 @@ function rotate(angle) {
 
 // --- Update ---
 function update() {
-  // Rotation
-  const turn = (keys['ArrowLeft']  ? ROT_SPEED : 0)
-             - (keys['ArrowRight'] ? ROT_SPEED : 0)
-             - mouseDX;
+  game.hurt   = Math.max(0, game.hurt - 0.04);
+  game.pickup = Math.max(0, game.pickup - 0.06);
+  if (game.over) return;
+
+  // Rotation (positive angle turns right: screen-right is the +plane side)
+  const turn = (keys['ArrowRight'] ? ROT_SPEED : 0)
+             - (keys['ArrowLeft']  ? ROT_SPEED : 0)
+             + mouseDX;
   mouseDX = 0;
   if (turn !== 0) rotate(turn);
 
@@ -164,16 +657,7 @@ function update() {
   // Normalize diagonal, then scale
   const len = Math.sqrt(mx * mx + my * my);
   if (len > 0) { mx = mx / len * MOVE_SPEED; my = my / len * MOVE_SPEED; }
-
-  // Slide-based collision
-  const nx = player.x + mx;
-  const ny = player.y + my;
-  if (!isWall(nx + Math.sign(mx) * COLLIDE, player.y) &&
-      !isWall(nx + Math.sign(mx) * COLLIDE, player.y + COLLIDE) &&
-      !isWall(nx + Math.sign(mx) * COLLIDE, player.y - COLLIDE)) player.x = nx;
-  if (!isWall(player.x, ny + Math.sign(my) * COLLIDE) &&
-      !isWall(player.x + COLLIDE, ny + Math.sign(my) * COLLIDE) &&
-      !isWall(player.x - COLLIDE, ny + Math.sign(my) * COLLIDE)) player.y = ny;
+  tryMove(player, mx, my, COLLIDE);
 
   // Weapon animation
   const now = performance.now();
@@ -188,6 +672,10 @@ function update() {
     weapon.kickY = 28 * (1 - Math.min(t, 1));
     if (t >= 1) { weapon.state = 'idle'; weapon.kickY = 0; }
   }
+
+  updateEnemies(now);
+  updateProjectiles();
+  updatePickups();
 }
 
 // --- Render ---
@@ -202,46 +690,71 @@ function render() {
 
   // Cast one ray per screen column
   for (let x = 0; x < SCREEN_W; x++) {
-    const camX   = 2 * x / SCREEN_W - 1;
-    const rayDX  = player.dirX + player.planeX * camX;
-    const rayDY  = player.dirY + player.planeY * camX;
-
-    let mapX = Math.floor(player.x);
-    let mapY = Math.floor(player.y);
-
-    const ddX = rayDX === 0 ? 1e30 : Math.abs(1 / rayDX);
-    const ddY = rayDY === 0 ? 1e30 : Math.abs(1 / rayDY);
-
-    let stepX, stepY, sdX, sdY;
-    if (rayDX < 0) { stepX = -1; sdX = (player.x - mapX) * ddX; }
-    else           { stepX =  1; sdX = (mapX + 1 - player.x) * ddX; }
-    if (rayDY < 0) { stepY = -1; sdY = (player.y - mapY) * ddY; }
-    else           { stepY =  1; sdY = (mapY + 1 - player.y) * ddY; }
-
-    let hit = 0, side = 0;
-    while (!hit) {
-      if (sdX < sdY) { sdX += ddX; mapX += stepX; side = 0; }
-      else            { sdY += ddY; mapY += stepY; side = 1; }
-      if (mapX >= 0 && mapX < MAP_W && mapY >= 0 && mapY < MAP_H && MAP[mapY][mapX] > 0)
-        hit = MAP[mapY][mapX];
-    }
-
-    const dist = side === 0 ? sdX - ddX : sdY - ddY;
+    const camX = 2 * x / SCREEN_W - 1;
+    const dist = castRay(player.x, player.y,
+                         player.dirX + player.planeX * camX,
+                         player.dirY + player.planeY * camX);
     zBuf[x] = dist;
 
     const lineH = Math.floor(SCREEN_H / dist);
     const y0 = Math.max(0, HALF_H - lineH / 2 | 0);
     const y1 = Math.min(SCREEN_H - 1, HALF_H + lineH / 2 | 0);
 
-    const cols = WALL_COLORS[hit] || WALL_COLORS[1];
-    ctx.fillStyle = cols[side]; // side 0 (EW) = light, side 1 (NS) = dark
+    const cols = WALL_COLORS[rayHit] || WALL_COLORS[1];
+    ctx.fillStyle = cols[raySide]; // side 0 (EW) = light, side 1 (NS) = dark
     ctx.fillRect(x, y0, 1, y1 - y0 + 1);
   }
 
+  drawSprites();
+
   // Weapon + HUD + minimap (drawn in order so minimap is on top)
   drawWeapon();
+  drawScreenFlash();
   drawHUD();
   if (showMap) drawMinimap();
+  if (game.over) drawDeathOverlay();
+}
+
+function enemyTex(e, now) {
+  const set = TEX[e.type];
+  if (e.state === 'dead') return set.dead;
+  if (e.state === 'pain' || now < e.hitUntil) return set.pain;
+  if (e.state === 'windup') return set.attack;
+  return (e.walkT / 12 | 0) % 2 ? set.walk1 : set.walk0;
+}
+
+// Billboard sprites, far → near, clipped per column against the wall z-buffer.
+// scale = height as a fraction of wall height; z = bottom edge height above the floor.
+function drawSprites() {
+  const now = performance.now();
+  const list = [];
+  for (const e of enemies)     list.push({ x: e.x, y: e.y, tex: enemyTex(e, now), scale: e.def.scale, z: 0 });
+  for (const p of projectiles) list.push({ x: p.x, y: p.y, tex: TEX.ink, scale: 0.16, z: 0.26 });
+  for (const k of pickups)     list.push({ x: k.x, y: k.y, tex: TEX.tickets, scale: 0.16, z: 0 });
+  for (const s of list) s.d = (s.x - player.x) ** 2 + (s.y - player.y) ** 2;
+  list.sort((a, b) => b.d - a.d);
+
+  const invDet = 1 / (player.planeX * player.dirY - player.dirX * player.planeY);
+  for (const s of list) {
+    const sx = s.x - player.x, sy = s.y - player.y;
+    const tx = invDet * (player.dirY * sx - player.dirX * sy);   // screen-space x
+    const ty = invDet * (-player.planeY * sx + player.planeX * sy); // depth
+    if (ty <= 0.1) continue;
+
+    const screenX = (SCREEN_W / 2) * (1 + tx / ty);
+    const fullH   = SCREEN_H / ty;
+    const h       = fullH * s.scale;
+    const w       = h * s.tex.width / s.tex.height;
+    const top     = HALF_H + fullH / 2 - s.z * fullH - h;
+    const left    = screenX - w / 2;
+    const x0 = Math.max(0, Math.floor(left));
+    const x1 = Math.min(SCREEN_W - 1, Math.floor(left + w));
+    for (let x = x0; x <= x1; x++) {
+      if (ty >= zBuf[x]) continue;
+      const texX = Math.min(s.tex.width - 1, Math.floor((x - left) * s.tex.width / w));
+      ctx.drawImage(s.tex, texX, 0, 1, s.tex.height, x, top, 1, h);
+    }
+  }
 }
 
 function drawWeapon() {
@@ -298,6 +811,18 @@ function drawWeapon() {
   ctx.fillRect(x + 45, y + 76, sbW, 10);
   ctx.fillStyle = '#484848';
   ctx.fillRect(x + 45, y + 76, sbW, 3);
+}
+
+// Red wash when hurt, green when picking up tickets
+function drawScreenFlash() {
+  if (game.hurt > 0) {
+    ctx.fillStyle = `rgba(200,0,0,${game.hurt * 0.35})`;
+    ctx.fillRect(0, 0, SCREEN_W, SCREEN_H);
+  }
+  if (game.pickup > 0) {
+    ctx.fillStyle = `rgba(60,220,90,${game.pickup * 0.18})`;
+    ctx.fillRect(0, 0, SCREEN_W, SCREEN_H);
+  }
 }
 
 function drawHUD() {
@@ -358,6 +883,16 @@ function drawHUD() {
   ctx.font = '10px monospace';
   ctx.fillText(`/${game.maxAmmo}`, SCREEN_W - 16, midY + 4);
 
+  // Kill counter (top right)
+  ctx.fillStyle = 'rgba(0,0,0,0.6)';
+  ctx.fillRect(SCREEN_W - 150, 8, 142, 20);
+  ctx.fillStyle = '#666';
+  ctx.font = 'bold 10px monospace';
+  ctx.fillText('TICKETS CLOSED', SCREEN_W - 40, 18);
+  ctx.fillStyle = '#22cc55';
+  ctx.font = 'bold 12px monospace';
+  ctx.fillText(`${game.kills}`, SCREEN_W - 14, 18);
+
   ctx.textAlign = 'left';
   ctx.textBaseline = 'alphabetic';
 }
@@ -371,6 +906,13 @@ function drawMinimap() {
       ctx.fillRect(OX + c * S, OY + r * S, S - 1, S - 1);
     }
   }
+  // Enemies (bright = alerted, dim = idle, dark = dead), ink blobs
+  for (const e of enemies) {
+    ctx.fillStyle = e.state === 'dead' ? '#511' : e.state === 'idle' ? '#a33' : '#f44';
+    ctx.fillRect(OX + e.x * S - 2, OY + e.y * S - 2, 4, 4);
+  }
+  ctx.fillStyle = '#b77ce6';
+  for (const p of projectiles) ctx.fillRect(OX + p.x * S - 1, OY + p.y * S - 1, 2, 2);
   // Player dot + direction line
   const px = OX + player.x * S, py = OY + player.y * S;
   ctx.fillStyle = '#0f0';
@@ -382,6 +924,22 @@ function drawMinimap() {
   ctx.lineTo(px + player.dirX * 10, py + player.dirY * 10);
   ctx.stroke();
   ctx.globalAlpha = 1;
+}
+
+// Placeholder death screen — full version comes in Chunk 6
+function drawDeathOverlay() {
+  ctx.fillStyle = 'rgba(60,0,0,0.6)';
+  ctx.fillRect(0, 0, SCREEN_W, SCREEN_H);
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  ctx.fillStyle = '#ff4040';
+  ctx.font = 'bold 28px monospace';
+  ctx.fillText('YOUR TICKET HAS BEEN CLOSED', SCREEN_W / 2, HALF_H - 14);
+  ctx.fillStyle = '#ccc';
+  ctx.font = '12px monospace';
+  ctx.fillText('Press R to reopen', SCREEN_W / 2, HALF_H + 20);
+  ctx.textAlign = 'left';
+  ctx.textBaseline = 'alphabetic';
 }
 
 // --- Loop ---
