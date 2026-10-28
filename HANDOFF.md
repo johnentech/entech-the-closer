@@ -33,13 +33,15 @@ Working title: **DNS: The Reckoning**. Player is an IT tech who fights office eq
 
 | Type | HP | Speed | Attack |
 |---|---|---|---|
-| `printer` | 60 | 0.022 | Ink blob projectile (10 dmg, speed 0.07) at ≤9 tiles; paper-cut melee 12 at ≤1.2 |
-| `router` | 30 | 0.014 | 3-pellet hitscan burst, 3–5 each, accuracy falls off with range |
-| `shadow` | 150 | 0.065 | Melee 15 at ≤1.15, fast cooldown. **Not placed in the map — boss spawns it via `spawnEnemy('shadow', x, y)`** |
+| `printer` | 110 | 0.022 | Ink blob projectile (16 dmg, speed 0.07) at ≤9 tiles; paper-cut melee 20 at ≤1.2 |
+| `router` | 30 | 0.014 | 3-pellet hitscan burst, 4–7 each (`BURST_DMG`), accuracy falls off with range |
+| `shadow` | 300 | 0.065 | Melee 22 at ≤1.15, fast cooldown. **Not placed in the map — boss spawns it via `spawnEnemy('shadow', x, y)`** |
+
+(Values above are after play-test round 1 — see below.)
 
 - **AI states:** `idle → chase → windup → (attack) → chase`, plus `pain` (interrupts windup) and `dead`. Wake on sight (LOS within `sight` range), on being shot, or on hearing gunfire/explosions (`alertEnemies`: <5 tiles, or <10 with LOS).
 - **Pathing:** BFS flow field from the player's cell (`updateFlow`, rebuilt when the player changes cell or when `flowCell = -1` is set after a map change; 8-way with no corner cutting). Enemies with LOS walk straight at you; otherwise they step downhill on the field.
-- **Hitscan:** keyboard casts 7 rotated rays; each hits the nearest enemy (ray vs circle `def.radius`) before the wall. `PELLET_DMG = 9` (63 point blank → one-shots a Printer). Damage is summed per enemy per shot so pain is rolled once.
+- **Hitscan:** keyboard casts 7 rotated rays; each hits the nearest enemy (ray vs circle `def.radius`) before the wall. Per-pellet damage via `pelletDamage(dist)` (see play-test round 1). Damage is summed per enemy per shot so pain is rolled once. `damageEnemy()` returns true on a kill.
 - **Player damage:** `hurtPlayer(dmg)` + red flash. At 0 HP: `game.over`, placeholder "YOUR TICKET HAS BEEN CLOSED / Press R" overlay (real death screen is Chunk 6).
 - **Pulled forward from Chunk 6:** `game.kills` + "TICKETS CLOSED" counter (top right).
 
@@ -52,18 +54,30 @@ Working title: **DNS: The Reckoning**. Player is an IT tech who fights office eq
 | `=` | cubicle divider (2) | `p` / `r` | Printer / Rogue Router |
 | `S` | server rack (3) | `t` | tickets (+8 keyboard ammo) |
 | `D` | boss door (4) | `c` | coffee (+20 SLA) |
+| `K` | security door (7) | | |
 | `%` | IT closet shelving (5) | `C` | Closing Cannon |
 | `@` | arena wall (6, DNS purple) | `o` | closures (+3 cannon ammo) |
 | | | `B` | DNS boss spawn → `BOSS_SPAWN` (unused until Chunk 5) |
 
-- **Route:** Office/cubicle farm (top-left, 3 Printers) → east hallway (Router) → **IT Closet** (top-right, shelving aisles, Printer + Router guarding the **Closing Cannon**) → hallway down (Printer) → **Server Room** (bottom-left, rack clusters, 4 Routers + Printer) → **Boss Door** (east wall of server room, `BOSS_DOOR = {x:25, y:22}`) → **Arena** (bottom-right, 13×17 open room with 4 pillar pairs, coffee + closures by the entrance). Office also connects straight down to the server room, so the closet is optional but rewarded.
-- 12 enemies placed; 14 pickups (4 tickets, 5 coffee, 4 closures, 1 cannon) + 60% ticket drops (+4) from kills.
+- **Route:** Office/cubicle farm (top-left, 3 Printers) → east hallway (Router) → **IT Closet** (top-right, shelving aisles, Printer + Router guarding the **Closing Cannon**) → hallway down (Printer) → **Server Room** (bottom-left, rack clusters, 4 Routers + Printer) → **Boss Door** (east wall of server room, `BOSS_DOOR = {x:25, y:22}`) → **Arena** (bottom-right, 13×17 open room with 4 pillar pairs, coffee + closures by the entrance). Office also connects straight down to the server room — but both server-room entrances are security doors that only unlock once you have the cannon (play-test round 1), so the closet is mandatory.
+- 12 enemies placed (14 after play-test round 1); 14 pickups (4 tickets, 5 coffee, 4 closures, 1 cannon) + 60% ticket drops (+4) from kills.
 - **Weapons:** `WEAPONS` table (`label`, `ammoLabel`, ammo/max keys on `game`, `COOL_MS`, `KICK`). `game.weapon` = `'keyboard' | 'cannon'`. Switch with **1 / 2 / Q / mouse wheel**; `switchWeapon(name)` lowers then raises the weapon (`weapon.state` `lowering → raising`, `SWITCH_MS = 160` each). A switch requested mid-shot starts when cooldown ends; switching back mid-swap cancels it.
-- **Closing Cannon** `[ CLOSING CANNON ]`, ammo label **CLOSURES** (max 10, pickup gives 5 and auto-switches): rocket projectile `ROCKET_SPEED = 0.16` (sub-stepped ×4 so it can't tunnel), explodes on wall or enemy contact. `explode()` deals `SPLASH_DMG = 110` with linear falloff over `SPLASH_RADIUS = 2.2`, blocked by walls (LOS). **Self-damage** at `SELF_DMG_MULT = 0.5` (≈48 if you fire into a wall in your face). Cooldown 950 ms. Explosion = growing/fading `TEX.explosion` sprite for 350 ms.
+- **Closing Cannon** `[ CLOSING CANNON ]`, ammo label **CLOSURES** (max 10, pickup gives 5 and auto-switches): rocket projectile `ROCKET_SPEED = 0.16` (sub-stepped ×4 so it can't tunnel), explodes on wall or enemy contact. `explode()` deals `SPLASH_DMG` (now 140) with linear falloff over `SPLASH_RADIUS = 2.2`, blocked by walls (LOS). **Self-damage** at `SELF_DMG_MULT` (now 0.4) (≈48 if you fire into a wall in your face). Cooldown 950 ms. Explosion = growing/fading `TEX.explosion` sprite for 350 ms.
 - **Pickups** generalized: `pickups[] = {kind, x, y, amount?}`; `PICKUPS[kind] = {tex, scale, apply}` — `apply` returns a message string, or `false` to leave it on the floor (full health / full ammo).
 - **Boss door:** red door with frame, seams and lock light (`drawDoorColumn`, uses `rayWallX`). `[ E ] OPEN` prompt when facing it within ~1.8 tiles (`doorAhead()`); **E** opens it (cell → 0). Once the player is >1.3 tiles past it, `checkBossTrigger()` re-seals it, nudges any enemy out of the doorway, and calls **`startBossFight()` — the Chunk 5 hook** (currently just sets `game.bossTriggered` and shows "THE DOOR SEALS BEHIND YOU. RESOLVING DNS..."). Door can't be reopened after that.
 - HUD: weapon label + `[1] keyboard 2 cannon` slot hint once you own the cannon; ammo label/count follow the current weapon. Top-center message line (`showMessage(text, ms)`) for pickups and events.
 - Minimap shrunk to 5px cells and colored by wall type (door red, arena purple); rockets shown in orange.
+
+### Play-test round 1 ✅ (user feedback → changes)
+- **"Enemies should hit harder / have more HP":** Printer HP 60 → 110, ink 10 → 16, melee 12 → 20; Router burst 3–5 → 4–7 per pellet (HP stays 30 — "fine as weaker enemies"); Shadow IT HP 150 → 300, melee 15 → 22. Printer/Router wind-ups slightly longer (500 / 600 ms) so the bigger hits are telegraphed.
+- **"Printers: 1–2 hits close, 3–4 far":** keyboard pellets now do random 13–19 each, full damage to 2 tiles then linear falloff to 0.6× at 10 tiles (`PELLET_DMG_MIN/MAX`, `FALLOFF_*`). Measured blasts-to-kill on a Printer (400 trials each): 1.5 tiles 74% one-shot / 26% two; 3 tiles 1–2; 5 tiles 2; 7 tiles mostly 3; 9 tiles mostly 3–4.
+- **"Cannon is fine":** kept the feel; `SPLASH_DMG` 110 → 140 so a direct hit still kills the tougher Printer, `SELF_DMG_MULT` 0.5 → 0.4 so self-damage stays ≈ the same.
+- **"Lock the server room until the cannon":** new wall type `K` = **security door** (7, steel with yellow/black hazard band) at both server-room entrances (8,16) and (22,16). Locked (red light, "ACCESS DENIED — CLEARANCE IS IN THE IT CLOSET") until `game.hasCannon`; then green light, E to open. `doorLocked(type)` covers both door kinds. Two extra Printers added in the server room (3 Printers + 4 Routers) so the cannon gets a real encounter.
+- **"Enemy attacks more noticeable":** pulsing additive glow over an enemy while it winds up (`WINDUP_GLOW_TEX`), muzzle flash on the attacker when it fires (`ATTACK_FLASH_TEX`), bigger glowing ink blobs with a trail and wall splat, Router misses kick up sparks around you, red vignette on hit (stronger), **screen shake** scaled by damage, and **red direction arcs** around the crosshair pointing at whoever hit you (`damageDirs`, tracks as you turn).
+- **"Keyboard attack more noticeable":** muzzle flash was effectively one frame (bug) — now fades over `FLASH_MS = 130`, and is bigger/brighter; brief white screen flash; screen shake; bigger kick (44px); **keycaps fly off the keyboard** toward the crosshair (`keycaps`, `drawKeycaps`); impact puffs where pellets land (paper scraps on Printers, sparks on Routers, dust on walls); crosshair with an **X hit marker** (red on a kill).
+- **Bug fixed:** boss trigger only checked `player.x`, so walking into the IT Closet started the boss fight and permanently locked the boss door. Now it requires the player to be inside the arena (`ARENA` flood-fill mask).
+- Effects plumbing: `effects[]` + `addEffect(x, y, z, tex, scale, ms, rise)` for short-lived billboards; `updateEffects()` prunes effects/explosions/keycaps/damageDirs; sprites support `alpha` and `blend`.
+- Environment graphics (wall textures etc.) deliberately deferred — user wants to revisit later.
 
 ---
 
@@ -130,6 +144,6 @@ render()         — ceiling → floor → raycaster (+drawDoorColumn) → drawS
 - FOV plane = 0.66 (~66°)
 - MOVE_SPEED = 0.055, ROT_SPEED = 0.038, COLLIDE margin = 0.22
 - Keyboard: 7 pellets, SPREAD = 0.09, cooldown 650ms
-- Closing Cannon: rocket 0.16 tiles/frame, splash 110 over 2.2 tiles, 50% self-damage, cooldown 950ms
+- Closing Cannon: rocket 0.16 tiles/frame, splash 140 over 2.2 tiles, 40% self-damage, cooldown 950ms
 - HUD labels: health = "SLA", keyboard ammo = "TICKETS", cannon ammo = "CLOSURES", kills = "TICKETS CLOSED"
 - Boss death line: "SERVFAIL"

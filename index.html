@@ -24,7 +24,8 @@ const COLLIDE    = 0.22; // collision margin
 
 // --- Level ---
 // Office (top left) → hallways → IT Closet (top right) → Server Room (bottom left) → Boss Door → Arena (bottom right)
-// Walls:    # concrete   = cubicle divider   S server rack   D boss door   % IT closet shelving   @ arena wall
+// The Server Room's security doors stay locked until the Closing Cannon is picked up in the IT Closet.
+// Walls:    # concrete   = cubicle divider   S server rack   D boss door   K security door   % IT closet shelving   @ arena wall
 // Entities: P player start   p Printer   r Rogue Router   t tickets   c coffee
 //           C Closing Cannon   o closures (cannon ammo)   B DNS boss spawn (Chunk 5)
 const LEVEL = [
@@ -44,10 +45,10 @@ const LEVEL = [
   '########..############..#@.............@',
   '########t.############..#@..@@.....@@..@',
   '########..############..#@..@@.....@@..@',
-  '########..############..#@.............@',
+  '########K#############K##@.............@',
   '#........................@.............@',
   '#..SSS...SSS...SSS.......@.............@',
-  '#..S.S...S.....S.S...r...@.............@',
+  '#..S.S...S..p..S.S...r...@.............@',
   '#..SSS...SSS...SSS.......@......B......@',
   '#....r...................@.............@',
   '#..........t.............Dc............@',
@@ -55,12 +56,14 @@ const LEVEL = [
   '#..S.S...S.S...S.S.......@.............@',
   '#..SSS...SSS...SSS..r....@..@@.....@@..@',
   '#......p.................@..@@.....@@..@',
-  '#...o.........r......o...@.............@',
+  '#...o.........r...p..o...@.............@',
   '#...........c............@.............@',
   '#########################@@@@@@@@@@@@@@@',
 ];
-const WALL_CHARS = { '#': 1, '=': 2, 'S': 3, 'D': 4, '%': 5, '@': 6 };
-const DOOR = 4;
+const WALL_CHARS = { '#': 1, '=': 2, 'S': 3, 'D': 4, '%': 5, '@': 6, 'K': 7 };
+const DOOR          = 4; // boss door
+const SECURITY_DOOR = 7; // server room doors, unlocked by the Closing Cannon
+const DOOR_TYPES    = [DOOR, SECURITY_DOOR];
 
 // Parse into MAP (0 = floor, >0 = wall type) and a list of entity spawns
 const MAP = [];
@@ -91,8 +94,9 @@ const WALL_COLORS = {
   4: ['#8a1a1a', '#661212'], // boss door (red)
   5: ['#5f6650', '#454a38'], // IT closet shelving (olive metal)
   6: ['#3e2463', '#2c1848'], // arena wall (DNS purple)
+  7: ['#56616c', '#3e4750'], // security door (steel)
 };
-const MINIMAP_COLORS = { 1: '#999', 2: '#a08050', 3: '#4a6a9a', 4: '#e33', 5: '#7a8060', 6: '#7a4aa0' };
+const MINIMAP_COLORS = { 1: '#999', 2: '#a08050', 3: '#4a6a9a', 4: '#e33', 5: '#7a8060', 6: '#7a4aa0', 7: '#e0b020' };
 
 const canvas = document.getElementById('game');
 const ctx = canvas.getContext('2d');
@@ -120,6 +124,10 @@ const game = {
   kills: 0,
   hurt: 0,      // red damage flash, 1 → 0
   pickup: 0,    // green pickup flash, 1 → 0
+  fireFlash: 0, // white flash when the keyboard fires, 1 → 0
+  hitMarker: 0, // crosshair hit marker, 1 → 0
+  killMarker: false,
+  shake: 0,     // screen shake amplitude in px, decays each frame
   over: false,  // player dead
   bossTriggered: false,
   msg: '', msgUntil: 0,
@@ -127,10 +135,11 @@ const game = {
 };
 
 const WEAPONS = {
-  keyboard: { label: '[ KEYBOARD v1.0 ]', ammoLabel: 'TICKETS',  ammo: 'ammo',       max: 'maxAmmo',       COOL_MS: 650, KICK: 28 },
+  keyboard: { label: '[ KEYBOARD v1.0 ]', ammoLabel: 'TICKETS',  ammo: 'ammo',       max: 'maxAmmo',       COOL_MS: 650, KICK: 44 },
   cannon:   { label: '[ CLOSING CANNON ]', ammoLabel: 'CLOSURES', ammo: 'cannonAmmo', max: 'maxCannonAmmo', COOL_MS: 950, KICK: 44 },
 };
 const SWITCH_MS = 160; // per half (lower, then raise)
+const FLASH_MS  = 130; // muzzle flash fade
 
 // Weapon animation state (shared by all weapons)
 const weapon = {
@@ -145,13 +154,19 @@ const weapon = {
 };
 const PELLETS    = 7;
 const SPREAD     = 0.09;
-const PELLET_DMG = 9;
+// Per-pellet damage is random in [MIN, MAX], scaled down with range: full until FALLOFF_START
+// tiles, easing to FALLOFF_MIN× at FALLOFF_END. Close range: Printer in 1–2 blasts; far: 3–4.
+const PELLET_DMG_MIN = 13;
+const PELLET_DMG_MAX = 19;
+const FALLOFF_START  = 2;
+const FALLOFF_END    = 10;
+const FALLOFF_MIN    = 0.6;
 
 // Closing Cannon — slow projectile, splash damage with falloff, can hurt the player
 const ROCKET_SPEED  = 0.16;
 const SPLASH_RADIUS = 2.2;
-const SPLASH_DMG    = 110;
-const SELF_DMG_MULT = 0.5;
+const SPLASH_DMG    = 140; // direct hit still kills a Printer
+const SELF_DMG_MULT = 0.4;
 const EXPLOSION_MS  = 350;
 
 // --- Textures (procedural, drawn once into offscreen canvases) ---
@@ -336,7 +351,18 @@ const TEX = {
   printer: enemyTexSet(48, 44, drawPrinter, drawPrinterDead),
   router:  enemyTexSet(40, 36, drawRouter,  drawRouterDead),
   shadow:  enemyTexSet(44, 60, drawShadow,  drawShadowDead),
-  ink:       radialTex(16, [[0, '#b77ce6'], [0.4, '#5a1f8a'], [1, 'rgba(30,8,50,0)']]),
+  ink:       radialTex(24, [[0, '#f0d0ff'], [0.2, '#c78cf0'], [0.5, '#6a24a0'], [1, 'rgba(60,10,100,0)']]),
+  inkTrail:  radialTex(16, [[0, 'rgba(160,90,220,0.7)'], [1, 'rgba(90,30,140,0)']]),
+  inkSplat:  radialTex(24, [[0, 'rgba(120,50,180,0.9)'], [0.6, 'rgba(70,20,110,0.6)'], [1, 'rgba(40,10,70,0)']]),
+  inkFlash:  radialTex(32, [[0, 'rgba(240,200,255,0.95)'], [0.35, 'rgba(170,80,240,0.7)'], [1, 'rgba(90,20,160,0)']]),
+  muzzle:    radialTex(32, [[0, 'rgba(255,255,230,1)'], [0.3, 'rgba(255,220,80,0.85)'], [1, 'rgba(255,140,0,0)']]),
+  spark:     radialTex(16, [[0, '#ffffff'], [0.3, '#ffe14a'], [1, 'rgba(255,160,0,0)']]),
+  puff:      radialTex(16, [[0, 'rgba(230,230,230,0.9)'], [0.5, 'rgba(170,170,170,0.6)'], [1, 'rgba(120,120,120,0)']]),
+  shadowHit: radialTex(24, [[0, 'rgba(255,170,255,1)'], [0.35, 'rgba(200,70,255,0.75)'], [1, 'rgba(100,20,160,0)']]),
+  paperHit:  makeTex(16, 16, (g, R) => {
+    R('#ffffff', 2, 3, 5, 4); R('#f0f0f0', 9, 1, 4, 5); R('#ffffff', 6, 9, 6, 4);
+    R('#e8e8e8', 1, 11, 3, 3); R('#6a24a0', 11, 8, 3, 3); R('#6a24a0', 4, 7, 2, 2);
+  }),
   rocket:    radialTex(16, [[0, '#ffffff'], [0.3, '#ff6a3a'], [0.7, '#c01810'], [1, 'rgba(160,10,0,0)']]),
   explosion: radialTex(32, [[0, '#fffbe0'], [0.25, '#ffd040'], [0.6, '#ff6a10'], [1, 'rgba(180,30,0,0)']]),
   tickets: makeTex(24, 18, (g, R) => {
@@ -375,23 +401,35 @@ const TEX = {
 // --- Enemies ---
 // speed in tiles/frame; ranges in tiles; scale = sprite height as fraction of wall height
 const ENEMY_TYPES = {
-  printer: { hp: 60,  speed: 0.022, radius: 0.35, scale: 0.55, sight: 12, stopDist: 1.0,
-             attackRange: 9,    meleeRange: 1.2,  meleeDmg: 12, ranged: 'ink',
-             windupMs: 450, cooldownMs: 1900, painChance: 0.5 },
+  printer: { hp: 110, speed: 0.022, radius: 0.35, scale: 0.55, sight: 12, stopDist: 1.0,
+             attackRange: 9,    meleeRange: 1.2,  meleeDmg: 20, ranged: 'ink',
+             windupMs: 500, cooldownMs: 1900, painChance: 0.4 },
   router:  { hp: 30,  speed: 0.014, radius: 0.3,  scale: 0.42, sight: 11, stopDist: 1.0,
              attackRange: 9,    meleeRange: 0,    meleeDmg: 0,  ranged: 'burst',
-             windupMs: 550, cooldownMs: 2100, painChance: 0.7 },
-  shadow:  { hp: 150, speed: 0.065, radius: 0.4,  scale: 0.8,  sight: 20, stopDist: 0.7,
-             attackRange: 1.15, meleeRange: 1.15, meleeDmg: 15, ranged: null,
-             windupMs: 220, cooldownMs: 850,  painChance: 0.25 },
+             windupMs: 600, cooldownMs: 2100, painChance: 0.7 },
+  shadow:  { hp: 300, speed: 0.065, radius: 0.4,  scale: 0.8,  sight: 20, stopDist: 0.7,
+             attackRange: 1.15, meleeRange: 1.15, meleeDmg: 22, ranged: null,
+             windupMs: 220, cooldownMs: 850,  painChance: 0.2 },
 };
 const INK_SPEED = 0.07;
-const INK_DMG   = 10;
+const INK_DMG   = 16;
+const BURST_DMG = [4, 7]; // router: per pellet, min..max
 
 const enemies     = [];
 const projectiles = []; // { kind: 'ink' | 'rocket', x, y, dx, dy, dmg }
 const explosions  = []; // { x, y, t0 }
 const pickups     = []; // { kind, x, y, amount }
+const effects     = []; // { x, y, z, tex, scale, ms, rise, t0 } — see addEffect()
+const keycaps     = []; // screen-space keycap particles thrown by the keyboard
+const damageDirs  = []; // { x, y, t0 } — world position damage came from
+const KEYCAP_MS     = 220;
+const DAMAGE_DIR_MS = 900;
+const KEY_CHARS     = 'QWERTYASDFGZXCV';
+
+// Pellet impact on each enemy type, and the flash shown when each enemy attacks
+const HIT_TEX          = { printer: TEX.paperHit, router: TEX.spark, shadow: TEX.shadowHit };
+const ATTACK_FLASH_TEX = { printer: TEX.inkFlash, router: TEX.muzzle, shadow: TEX.shadowHit };
+const WINDUP_GLOW_TEX  = { printer: TEX.inkFlash, router: TEX.muzzle, shadow: TEX.shadowHit };
 
 // Pickup kinds: sprite + what happens on touch (return false to leave it on the floor)
 const PICKUPS = {
@@ -414,7 +452,7 @@ const PICKUPS = {
     game.hasCannon  = true;
     game.cannonAmmo = Math.min(game.maxCannonAmmo, game.cannonAmmo + 5);
     switchWeapon('cannon');
-    return 'CLOSING CANNON ACQUIRED  [2]';
+    return 'CLOSING CANNON ACQUIRED  —  SERVER ROOM UNLOCKED';
   } },
 };
 
@@ -448,21 +486,23 @@ function wake(e, now) {
   e.nextAttackAt = now + 400 + Math.random() * 600;
 }
 
+// Returns true if this hit killed the enemy
 function damageEnemy(e, dmg, now) {
-  if (e.state === 'dead') return;
-  e.hp -= dmg;
+  if (e.state === 'dead') return false;
+  e.hp -= Math.round(dmg);
   e.hitUntil = now + 90;
   if (e.hp <= 0) {
     e.state = 'dead';
     game.kills++;
     if (Math.random() < 0.6) pickups.push({ kind: 'tickets', x: e.x, y: e.y, amount: 4 });
-    return;
+    return true;
   }
   wake(e, now);
   if (Math.random() < e.def.painChance) {
     e.state = 'pain';
     e.painUntil = now + 220;
   }
+  return false;
 }
 
 // Gunfire wakes enemies that can see you, or are close enough to hear it
@@ -474,10 +514,13 @@ function alertEnemies(now) {
   }
 }
 
-function hurtPlayer(dmg) {
+// (srcX, srcY) = where the damage came from, for the on-screen direction indicator
+function hurtPlayer(dmg, srcX, srcY) {
   if (game.over || dmg <= 0) return;
   game.health = Math.max(0, game.health - dmg);
-  game.hurt = 1;
+  game.hurt  = 1;
+  game.shake = Math.max(game.shake, Math.min(12, 3 + dmg * 0.4));
+  if (srcX !== undefined) damageDirs.push({ x: srcX, y: srcY, t0: performance.now() });
   if (game.health === 0) {
     game.over = true;
     if (document.pointerLockElement) document.exitPointerLock();
@@ -492,20 +535,33 @@ function showMessage(text, ms = 2200) {
 function enemyAttack(e, dist) {
   const d = e.def;
   if (!e.sees) return; // lost sight during windup
+  const now = performance.now();
   if (d.meleeDmg && dist <= d.meleeRange) {
-    hurtPlayer(Math.round(d.meleeDmg * (0.8 + Math.random() * 0.4)));
+    hurtPlayer(Math.round(d.meleeDmg * (0.8 + Math.random() * 0.4)), e.x, e.y);
     return;
   }
+  // Muzzle flash on the attacker so you can see who's shooting
+  addEffect(e.x, e.y, d.scale * 0.25, ATTACK_FLASH_TEX[e.type], d.scale * 0.8, 160, 0);
   if (d.ranged === 'ink') {
     const dx = (player.x - e.x) / dist, dy = (player.y - e.y) / dist;
-    projectiles.push({ kind: 'ink', x: e.x + dx * 0.4, y: e.y + dy * 0.4, dx: dx * INK_SPEED, dy: dy * INK_SPEED, dmg: INK_DMG });
+    projectiles.push({ kind: 'ink', x: e.x + dx * 0.4, y: e.y + dy * 0.4, dx: dx * INK_SPEED, dy: dy * INK_SPEED, dmg: INK_DMG, sx: e.x, sy: e.y, age: 0 });
   } else if (d.ranged === 'burst') {
-    // 3-pellet hitscan burst; accuracy falls off with range
+    // 3-pellet hitscan burst; accuracy falls off with range. Misses kick up puffs around you.
     const hitChance = Math.min(0.85, Math.max(0.2, 1 - dist / 12));
     let dmg = 0;
-    for (let i = 0; i < 3; i++) if (Math.random() < hitChance) dmg += 3 + (Math.random() * 3 | 0);
-    if (dmg) hurtPlayer(dmg);
+    for (let i = 0; i < 3; i++) {
+      if (Math.random() < hitChance) { dmg += BURST_DMG[0] + Math.round(Math.random() * (BURST_DMG[1] - BURST_DMG[0])); continue; }
+      const a = Math.random() * Math.PI * 2, r = 0.5 + Math.random() * 0.6;
+      const mx = player.x + Math.cos(a) * r, my = player.y + Math.sin(a) * r;
+      if (!isWall(mx, my)) addEffect(mx, my, Math.random() * 0.3, TEX.spark, 0.08, 220, 0.05);
+    }
+    if (dmg) hurtPlayer(dmg, e.x, e.y);
   }
+}
+
+// Short-lived billboard (puffs, sparks, muzzle flashes): fades out and drifts up by `rise`
+function addEffect(x, y, z, tex, scale, ms, rise) {
+  effects.push({ x, y, z, tex, scale, ms, rise, t0: performance.now() });
 }
 
 // Flow field: BFS distance from the player's cell, rebuilt when the player changes cell
@@ -619,8 +675,9 @@ function explode(x, y, now) {
   }
   const pd = Math.hypot(player.x - x, player.y - y);
   if (pd < SPLASH_RADIUS && hasLOS(x, y, player.x, player.y)) {
-    hurtPlayer(Math.round(SPLASH_DMG * (1 - pd / SPLASH_RADIUS) * SELF_DMG_MULT));
+    hurtPlayer(Math.round(SPLASH_DMG * (1 - pd / SPLASH_RADIUS) * SELF_DMG_MULT), x, y);
   }
+  if (pd < 7) game.shake = Math.max(game.shake, 10 * (1 - pd / 7));
   alertEnemies(now);
 }
 
@@ -640,15 +697,28 @@ function updateProjectiles(now) {
       continue;
     }
     p.x += p.dx; p.y += p.dy;
-    if (isWall(p.x, p.y)) { projectiles.splice(i, 1); continue; }
+    if (++p.age % 3 === 0) addEffect(p.x, p.y, 0.26, TEX.inkTrail, 0.12, 260, 0.02);
+    if (isWall(p.x, p.y)) {
+      addEffect(p.x - p.dx, p.y - p.dy, 0.2, TEX.inkSplat, 0.3, 300, 0);
+      projectiles.splice(i, 1);
+      continue;
+    }
     if (Math.hypot(player.x - p.x, player.y - p.y) < 0.35) {
-      hurtPlayer(p.dmg);
+      hurtPlayer(p.dmg, p.sx, p.sy);
       projectiles.splice(i, 1);
     }
   }
-  for (let i = explosions.length - 1; i >= 0; i--) {
-    if (now - explosions[i].t0 > EXPLOSION_MS) explosions.splice(i, 1);
-  }
+}
+
+// Expire short-lived visuals
+function updateEffects(now) {
+  const prune = (list, ms) => {
+    for (let i = list.length - 1; i >= 0; i--) if (now - list[i].t0 > (ms ?? list[i].ms)) list.splice(i, 1);
+  };
+  prune(explosions, EXPLOSION_MS);
+  prune(effects);
+  prune(keycaps, KEYCAP_MS);
+  prune(damageDirs, DAMAGE_DIR_MS);
 }
 
 function updatePickups() {
@@ -663,29 +733,56 @@ function updatePickups() {
   }
 }
 
-// --- Boss door ---
-// Returns the door cell the player is facing within reach, or null
+// --- Doors ---
+// Returns the door cell the player is facing within reach ({x, y, type}), or null
 function doorAhead() {
   for (const d of [0.6, 1.0, 1.4, 1.8]) {
     const cx = Math.floor(player.x + player.dirX * d);
     const cy = Math.floor(player.y + player.dirY * d);
-    if (isWall(cx, cy)) return MAP[cy] && MAP[cy][cx] === DOOR ? { x: cx, y: cy } : null;
+    if (!isWall(cx, cy)) continue;
+    const type = MAP[cy] && MAP[cy][cx];
+    return DOOR_TYPES.includes(type) ? { x: cx, y: cy, type } : null;
   }
   return null;
+}
+
+// Security doors open once you have the Closing Cannon; the boss door locks once the fight starts
+function doorLocked(type) {
+  return type === SECURITY_DOOR ? !game.hasCannon : game.bossTriggered;
 }
 
 function useAction() {
   const d = doorAhead();
   if (!d || game.over) return;
-  if (game.bossTriggered) { showMessage('LOCKED — RESOLVE THE DNS FIRST'); return; }
+  if (doorLocked(d.type)) {
+    showMessage(d.type === SECURITY_DOOR ? 'ACCESS DENIED  —  CLEARANCE IS IN THE IT CLOSET' : 'LOCKED  —  RESOLVE THE DNS FIRST');
+    return;
+  }
   MAP[d.y][d.x] = 0;
   flowCell = -1;
   showMessage('ACCESS GRANTED');
 }
 
-// Once the player is through the door: seal it behind them and hand off to the boss fight
+// Arena cells: flood fill from just inside the boss door (the closed door bounds it)
+const ARENA = new Uint8Array(MAP_W * MAP_H);
+if (BOSS_DOOR) {
+  const queue = [[BOSS_DOOR.x + 1, BOSS_DOOR.y]];
+  ARENA[BOSS_DOOR.y * MAP_W + BOSS_DOOR.x + 1] = 1;
+  while (queue.length) {
+    const [cx, cy] = queue.pop();
+    for (const [ox, oy] of NEIGHBORS.slice(0, 4)) {
+      const nx = cx + ox, ny = cy + oy;
+      if (isWall(nx, ny) || ARENA[ny * MAP_W + nx]) continue;
+      ARENA[ny * MAP_W + nx] = 1;
+      queue.push([nx, ny]);
+    }
+  }
+}
+
+// Once the player is in the arena and clear of the doorway: seal the door and hand off to the boss fight
 function checkBossTrigger() {
   if (game.bossTriggered || !BOSS_DOOR || player.x < BOSS_DOOR.x + 1.3) return;
+  if (!ARENA[Math.floor(player.y) * MAP_W + Math.floor(player.x)]) return;
   for (const e of enemies) {
     if (Math.floor(e.x) === BOSS_DOOR.x && Math.floor(e.y) === BOSS_DOOR.y) e.x -= 1; // don't seal anyone in the wall
   }
@@ -734,7 +831,7 @@ canvas.addEventListener('wheel', e => { e.preventDefault(); cycleWeapon(); }, { 
 let mouseDX = 0;
 canvas.addEventListener('mousedown', e => {
   if (e.button !== 0 || game.over) return;
-  if (document.pointerLockElement !== canvas) canvas.requestPointerLock();
+  if (document.pointerLockElement !== canvas) canvas.requestPointerLock()?.catch?.(() => {}); // embedded previews may refuse
   else shoot();
 });
 document.addEventListener('mousemove', e => {
@@ -758,6 +855,7 @@ function shoot() {
       x: player.x + player.dirX * 0.3, y: player.y + player.dirY * 0.3,
       dx: player.dirX * ROCKET_SPEED, dy: player.dirY * ROCKET_SPEED,
     });
+    game.shake = Math.max(game.shake, 7);
     alertEnemies(now);
     return;
   }
@@ -779,10 +877,37 @@ function shoot() {
       if (t <= 0 || t >= bestT) continue;
       if (Math.abs(ex * dy - ey * dx) < e.def.radius) { best = e; bestT = t; }
     }
-    if (best) hits.set(best, (hits.get(best) || 0) + PELLET_DMG);
+    // Impact puff just in front of whatever the pellet hit
+    const hx = player.x + dx * (bestT - 0.08), hy = player.y + dy * (bestT - 0.08);
+    if (best) {
+      hits.set(best, (hits.get(best) || 0) + pelletDamage(bestT));
+      addEffect(hx, hy, best.def.scale * (0.2 + Math.random() * 0.5), HIT_TEX[best.type], 0.12, 260, 0.08);
+    } else {
+      addEffect(hx, hy, 0.3 + Math.random() * 0.3, TEX.puff, 0.09, 300, 0.1);
+    }
   }
-  for (const [e, dmg] of hits) damageEnemy(e, dmg, now);
+  let killed = false;
+  for (const [e, dmg] of hits) killed = damageEnemy(e, dmg, now) || killed;
+  if (hits.size) { game.hitMarker = 1; game.killMarker = killed; }
+
+  // Feedback: keycaps fly off the keyboard toward the target, screen kicks and brightens
+  for (let i = 0; i < PELLETS; i++) {
+    keycaps.push({
+      x0: SCREEN_W / 2 + (Math.random() - 0.5) * 220, y0: SCREEN_H - 100,
+      x1: SCREEN_W / 2 + (Math.random() - 0.5) * 140, y1: HALF_H + (Math.random() - 0.5) * 70,
+      rot: Math.random() * 6, spin: (Math.random() - 0.5) * 14,
+      ch: KEY_CHARS[Math.random() * KEY_CHARS.length | 0], t0: now,
+    });
+  }
+  game.shake     = Math.max(game.shake, 4);
+  game.fireFlash = 1;
   alertEnemies(now);
+}
+
+function pelletDamage(dist) {
+  const t = Math.min(1, Math.max(0, (dist - FALLOFF_START) / (FALLOFF_END - FALLOFF_START)));
+  const base = PELLET_DMG_MIN + Math.random() * (PELLET_DMG_MAX - PELLET_DMG_MIN);
+  return base * (1 - t * (1 - FALLOFF_MIN));
 }
 
 // --- Helpers ---
@@ -853,8 +978,12 @@ function rotate(angle) {
 
 // --- Update ---
 function update() {
-  game.hurt   = Math.max(0, game.hurt - 0.04);
-  game.pickup = Math.max(0, game.pickup - 0.06);
+  game.hurt      = Math.max(0, game.hurt - 0.03);
+  game.pickup    = Math.max(0, game.pickup - 0.06);
+  game.fireFlash = Math.max(0, game.fireFlash - 0.2);
+  game.hitMarker = Math.max(0, game.hitMarker - 0.06);
+  game.shake     = game.shake < 0.3 ? 0 : game.shake * 0.82;
+  updateEffects(performance.now());
   if (game.over) return;
 
   // Rotation (positive angle turns right: screen-right is the +plane side)
@@ -883,7 +1012,6 @@ function update() {
   if (weapon.state === 'firing') {
     const t = (now - weapon.fireAt) / weapon.FIRE_MS;
     weapon.kickY = kick * Math.min(t, 1);
-    weapon.flash = Math.max(0, 1 - t * 5);
     if (t >= 1) weapon.state = 'cooling';
   }
   if (weapon.state === 'cooling') {
@@ -895,6 +1023,7 @@ function update() {
       weapon.kickY = 0;
     }
   }
+  weapon.flash = Math.max(0, 1 - (now - weapon.fireAt) / FLASH_MS);
   if (weapon.state === 'lowering') {
     const t = (now - weapon.switchAt) / SWITCH_MS;
     weapon.kickY = 140 * Math.min(t, 1);
@@ -920,18 +1049,22 @@ function update() {
   updateProjectiles(now);
   updatePickups();
   checkBossTrigger();
-  game.usePrompt = doorAhead() !== null;
+  game.usePrompt = doorAhead();
 }
 
 // --- Render ---
 function render() {
-  // Ceiling
+  // Screen shake offsets the 3D view and weapon; HUD stays put
+  ctx.save();
+  if (game.shake) ctx.translate((Math.random() * 2 - 1) * game.shake, (Math.random() * 2 - 1) * game.shake);
+
+  // Ceiling (overdrawn past the edges so shake never shows stale pixels)
   ctx.fillStyle = '#1a1a2e';
-  ctx.fillRect(0, 0, SCREEN_W, HALF_H);
+  ctx.fillRect(-16, -16, SCREEN_W + 32, HALF_H + 16);
 
   // Floor — slightly lighter, carpet feel
   ctx.fillStyle = '#282018';
-  ctx.fillRect(0, HALF_H, SCREEN_W, HALF_H);
+  ctx.fillRect(-16, HALF_H, SCREEN_W + 32, HALF_H + 16);
 
   // Cast one ray per screen column
   for (let x = 0; x < SCREEN_W; x++) {
@@ -948,32 +1081,41 @@ function render() {
     const cols = WALL_COLORS[rayHit] || WALL_COLORS[1];
     ctx.fillStyle = cols[raySide]; // side 0 (EW) = light, side 1 (NS) = dark
     ctx.fillRect(x, y0, 1, y1 - y0 + 1);
-    if (rayHit === DOOR) drawDoorColumn(x, y0, y1, lineH);
+    if (DOOR_TYPES.includes(rayHit)) drawDoorColumn(x, y0, y1, lineH, rayHit);
   }
 
   drawSprites();
 
   // Weapon + HUD + minimap (drawn in order so minimap is on top)
   drawWeapon();
+  drawKeycaps();
+  ctx.restore();
   drawScreenFlash();
+  drawCrosshair();
+  drawDamageDirs();
   drawHUD();
   if (showMap) drawMinimap();
   if (game.over) drawDeathOverlay();
 }
 
-// Boss door detail: dark frame at the edges, two seams, and a red lock light in the middle
-function drawDoorColumn(x, y0, y1, lineH) {
+// Door detail: dark frame at the edges, two seams, and a lock light (red = locked, green = open).
+// Security doors also get a yellow/black hazard band.
+function drawDoorColumn(x, y0, y1, lineH, type) {
   if (rayWallX < 0.07 || rayWallX > 0.93) {
     ctx.fillStyle = '#1a1a1a';
     ctx.fillRect(x, y0, 1, y1 - y0 + 1);
     return;
   }
   const seam = Math.max(1, lineH * 0.015);
-  ctx.fillStyle = '#3a0808';
+  ctx.fillStyle = type === DOOR ? '#3a0808' : '#22282e';
   ctx.fillRect(x, HALF_H - lineH * 0.3, 1, seam);
   ctx.fillRect(x, HALF_H + lineH * 0.3, 1, seam);
+  if (type === SECURITY_DOOR) {
+    ctx.fillStyle = (rayWallX * 8 | 0) % 2 ? '#e0b020' : '#151515';
+    ctx.fillRect(x, HALF_H + lineH * 0.34, 1, lineH * 0.1);
+  }
   if (rayWallX > 0.42 && rayWallX < 0.58) {
-    ctx.fillStyle = '#ff3030';
+    ctx.fillStyle = doorLocked(type) ? '#ff3030' : '#30ff60';
     ctx.fillRect(x, HALF_H - lineH * 0.05, 1, lineH * 0.1);
   }
 }
@@ -995,7 +1137,7 @@ function drawSprites() {
   for (const p of projectiles) {
     list.push(p.kind === 'rocket'
       ? { x: p.x, y: p.y, tex: TEX.rocket, scale: 0.14, z: 0.3 }
-      : { x: p.x, y: p.y, tex: TEX.ink,    scale: 0.16, z: 0.26 });
+      : { x: p.x, y: p.y, tex: TEX.ink,    scale: 0.24, z: 0.22 });
   }
   for (const k of pickups) list.push({ x: k.x, y: k.y, tex: PICKUPS[k.kind].tex, scale: PICKUPS[k.kind].scale, z: 0 });
   for (const b of explosions) {
@@ -1003,7 +1145,20 @@ function drawSprites() {
     const scale = 0.4 + 0.7 * t;
     list.push({ x: b.x, y: b.y, tex: TEX.explosion, scale, z: Math.max(0, 0.35 - scale / 2), alpha: 1 - t });
   }
-  for (const s of list) s.d = (s.x - player.x) ** 2 + (s.y - player.y) ** 2;
+  for (const f of effects) {
+    const t = Math.min(1, (now - f.t0) / f.ms);
+    list.push({ x: f.x, y: f.y, tex: f.tex, scale: f.scale * (1 + 0.5 * t), z: f.z + f.rise * t, alpha: 1 - t });
+  }
+  // Wind-up telegraph: a pulsing glow over any enemy about to attack, brightening as it charges
+  for (const e of enemies) {
+    if (e.state !== 'windup') continue;
+    const p = Math.min(1, 1 - (e.windupUntil - now) / e.def.windupMs);
+    const pulse = 0.75 + 0.25 * Math.sin(now * 0.04);
+    const scale = e.def.scale * (1.4 + 0.6 * p);
+    list.push({ x: e.x, y: e.y, tex: WINDUP_GLOW_TEX[e.type], scale, z: (e.def.scale - scale) / 2,
+                alpha: (0.3 + 0.5 * p) * pulse, blend: 'lighter', front: true });
+  }
+  for (const s of list) s.d = (s.x - player.x) ** 2 + (s.y - player.y) ** 2 - (s.front ? 0.05 : 0);
   list.sort((a, b) => b.d - a.d);
 
   const invDet = 1 / (player.planeX * player.dirY - player.dirX * player.planeY);
@@ -1022,6 +1177,7 @@ function drawSprites() {
     const x0 = Math.max(0, Math.floor(left));
     const x1 = Math.min(SCREEN_W - 1, Math.floor(left + w));
     ctx.globalAlpha = s.alpha ?? 1;
+    ctx.globalCompositeOperation = s.blend || 'source-over';
     for (let x = x0; x <= x1; x++) {
       if (ty >= zBuf[x]) continue;
       const texX = Math.min(s.tex.width - 1, Math.floor((x - left) * s.tex.width / w));
@@ -1029,6 +1185,7 @@ function drawSprites() {
     }
   }
   ctx.globalAlpha = 1;
+  ctx.globalCompositeOperation = 'source-over';
 }
 
 function drawWeapon() {
@@ -1045,12 +1202,13 @@ function drawKeyboard() {
 
   // Muzzle flash — radial glow drawn before weapon so it sits behind it
   if (weapon.flash > 0) {
-    const grad = ctx.createRadialGradient(cx, y - 10, 0, cx, y - 10, 110);
-    grad.addColorStop(0, `rgba(255,230,80,${weapon.flash * 0.55})`);
-    grad.addColorStop(1, 'rgba(255,180,40,0)');
+    const grad = ctx.createRadialGradient(cx, y - 20, 0, cx, y - 20, 190);
+    grad.addColorStop(0,   `rgba(255,255,220,${weapon.flash * 0.95})`);
+    grad.addColorStop(0.3, `rgba(255,220,80,${weapon.flash * 0.7})`);
+    grad.addColorStop(1,   'rgba(255,160,40,0)');
     ctx.fillStyle = grad;
     ctx.beginPath();
-    ctx.ellipse(cx, y - 10, 110, 80, 0, 0, Math.PI * 2);
+    ctx.ellipse(cx, y - 20, 190, 120, 0, 0, Math.PI * 2);
     ctx.fill();
   }
 
@@ -1150,10 +1308,82 @@ function drawCannon() {
   }
 }
 
-// Red wash when hurt, green when picking something up
+// Keycaps thrown by a keyboard blast: fly from the keyboard toward the crosshair, spinning and shrinking
+function drawKeycaps() {
+  const now = performance.now();
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  for (const k of keycaps) {
+    const t = Math.min(1, (now - k.t0) / KEYCAP_MS);
+    const e = 1 - (1 - t) * (1 - t); // ease out
+    const size = 20 * (1 - 0.75 * e);
+    ctx.save();
+    ctx.translate(k.x0 + (k.x1 - k.x0) * e, k.y0 + (k.y1 - k.y0) * e);
+    ctx.rotate(k.rot + k.spin * t);
+    ctx.globalAlpha = 1 - t * 0.6;
+    ctx.fillStyle = '#4a4a4a';
+    ctx.fillRect(-size / 2, -size / 2, size, size);
+    ctx.fillStyle = '#5e5e5e';
+    ctx.fillRect(-size / 2, -size / 2, size, size * 0.25);
+    ctx.fillStyle = '#ddd';
+    ctx.font = `bold ${Math.max(6, size * 0.55) | 0}px monospace`;
+    ctx.fillText(k.ch, 0, size * 0.05);
+    ctx.restore();
+  }
+  ctx.textAlign = 'left';
+  ctx.textBaseline = 'alphabetic';
+}
+
+// Small crosshair; flashes into an X hit marker (red on a kill) when pellets connect
+function drawCrosshair() {
+  const cx = SCREEN_W / 2, cy = HALF_H;
+  ctx.fillStyle = 'rgba(120,255,140,0.55)';
+  ctx.fillRect(cx - 1, cy - 1, 2, 2);
+  ctx.fillRect(cx - 9, cy - 1, 4, 2); ctx.fillRect(cx + 5, cy - 1, 4, 2);
+  ctx.fillRect(cx - 1, cy - 9, 2, 4); ctx.fillRect(cx - 1, cy + 5, 2, 4);
+  if (game.hitMarker > 0) {
+    ctx.strokeStyle = game.killMarker ? `rgba(255,60,60,${game.hitMarker})` : `rgba(255,255,255,${game.hitMarker})`;
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    for (const [sx, sy] of [[-1,-1],[1,-1],[-1,1],[1,1]]) {
+      ctx.moveTo(cx + sx * 6, cy + sy * 6);
+      ctx.lineTo(cx + sx * 13, cy + sy * 13);
+    }
+    ctx.stroke();
+  }
+}
+
+// Red arcs around the crosshair pointing toward whatever just hurt you (tracks as you turn)
+function drawDamageDirs() {
+  const now = performance.now();
+  ctx.lineWidth = 12;
+  ctx.lineCap = 'round';
+  for (const d of damageDirs) {
+    const tx = d.x - player.x, ty = d.y - player.y;
+    const fwd   = tx * player.dirX + ty * player.dirY;
+    const right = tx * -player.dirY + ty * player.dirX;
+    if (Math.abs(fwd) + Math.abs(right) < 0.01) continue; // splash on top of you: no direction
+    const a = Math.atan2(right, fwd) - Math.PI / 2;     // 0 = straight ahead = top of screen
+    ctx.strokeStyle = `rgba(255,30,30,${0.85 * (1 - (now - d.t0) / DAMAGE_DIR_MS)})`;
+    ctx.beginPath();
+    ctx.arc(SCREEN_W / 2, HALF_H, 120, a - 0.35, a + 0.35);
+    ctx.stroke();
+  }
+  ctx.lineCap = 'butt';
+}
+
+// Red wash when hurt, white when the keyboard fires, green when picking something up
 function drawScreenFlash() {
   if (game.hurt > 0) {
-    ctx.fillStyle = `rgba(200,0,0,${game.hurt * 0.35})`;
+    // Vignette: heavier at the edges so the center stays readable
+    const grad = ctx.createRadialGradient(SCREEN_W / 2, HALF_H, 80, SCREEN_W / 2, HALF_H, 460);
+    grad.addColorStop(0, `rgba(200,0,0,${game.hurt * 0.25})`);
+    grad.addColorStop(1, `rgba(200,0,0,${game.hurt * 0.65})`);
+    ctx.fillStyle = grad;
+    ctx.fillRect(0, 0, SCREEN_W, SCREEN_H);
+  }
+  if (game.fireFlash > 0) {
+    ctx.fillStyle = `rgba(255,245,210,${game.fireFlash * 0.12})`;
     ctx.fillRect(0, 0, SCREEN_W, SCREEN_H);
   }
   if (game.pickup > 0) {
@@ -1247,9 +1477,10 @@ function drawHUD() {
     ctx.fillText(game.msg, SCREEN_W / 2, 49);
   }
   if (game.usePrompt && !game.over) {
+    const locked = doorLocked(game.usePrompt.type);
     ctx.font = 'bold 12px monospace';
-    ctx.fillStyle = game.bossTriggered ? '#cc4444' : '#e8e8e8';
-    ctx.fillText(game.bossTriggered ? 'LOCKED' : '[ E ]  OPEN', SCREEN_W / 2, HALF_H + 50);
+    ctx.fillStyle = locked ? '#ff5050' : '#e8e8e8';
+    ctx.fillText(locked ? 'LOCKED' : '[ E ]  OPEN', SCREEN_W / 2, HALF_H + 50);
   }
 
   ctx.textAlign = 'left';
