@@ -93,17 +93,7 @@ LEVEL.forEach((row, y) => {
 const MAP_W = MAP[0].length;
 const MAP_H = MAP.length;
 
-// Light/dark color per wall type [sideX, sideY(darker)]
-const WALL_COLORS = {
-  1: ['#7a7a7a', '#505050'], // concrete
-  2: ['#b09060', '#806840'], // cubicle divider (tan)
-  3: ['#2a3a5a', '#1a2a4a'], // server rack (dark blue)
-  4: ['#8a1a1a', '#661212'], // boss door (red)
-  5: ['#5f6650', '#454a38'], // IT closet shelving (olive metal)
-  6: ['#3e2463', '#2c1848'], // arena wall (DNS purple)
-  7: ['#56616c', '#3e4750'], // security door (steel)
-  8: ['#2a3a5a', '#1a2a4a'], // override switch (a server rack; the panel is drawn by drawSwitchColumn)
-};
+// Walls are textured (WALL_TEX, see "Map textures"); the minimap uses flat colors
 const MINIMAP_COLORS = { 1: '#999', 2: '#a08050', 3: '#4a6a9a', 4: '#e33', 5: '#7a8060', 6: '#7a4aa0', 7: '#e0b020', 8: '#ff9020' };
 
 const canvas = document.getElementById('game');
@@ -1642,8 +1632,8 @@ function isWall(x, y) {
 
 // DDA march from (ox,oy) along (dx,dy). Returns distance in ray-parameter units:
 // perpendicular distance for camera rays, true distance when (dx,dy) is normalized.
-// Sets rayHit (wall type), raySide (0 = EW face, 1 = NS face), rayWallX (0–1 across the face).
-let rayHit = 0, raySide = 0, rayWallX = 0;
+// Sets rayHit (wall type), raySide (0 = EW face, 1 = NS face), rayWallX (0–1 across the face), rayMapX/Y (cell hit).
+let rayHit = 0, raySide = 0, rayWallX = 0, rayMapX = 0, rayMapY = 0;
 function castRay(ox, oy, dx, dy) {
   let mapX = Math.floor(ox);
   let mapY = Math.floor(oy);
@@ -1665,7 +1655,7 @@ function castRay(ox, oy, dx, dy) {
     else hit = MAP[mapY][mapX];
   }
   const dist = side === 0 ? sdX - ddX : sdY - ddY;
-  rayHit = hit; raySide = side;
+  rayHit = hit; raySide = side; rayMapX = mapX; rayMapY = mapY;
   rayWallX = side === 0 ? oy + dist * dy : ox + dist * dx;
   rayWallX -= Math.floor(rayWallX);
   return dist;
@@ -1788,6 +1778,224 @@ function update() {
   game.usePrompt = doorAhead();
 }
 
+// --- Map textures (64×64, procedural, drawn once) ---
+const TEX_SIZE = 64;
+
+// Small seeded RNG so textures look the same every load
+function rng(seed) {
+  return () => {
+    seed = seed + 0x6D2B79F5 | 0;
+    let t = Math.imul(seed ^ seed >>> 15, 1 | seed);
+    t = t + Math.imul(t ^ t >>> 7, 61 | t) ^ t;
+    return ((t ^ t >>> 14) >>> 0) / 4294967296;
+  };
+}
+// Sprinkle n single-pixel specks (texture grain)
+function speckle(R, rand, n, colors) {
+  for (let i = 0; i < n; i++) R(colors[rand() * colors.length | 0], rand() * TEX_SIZE | 0, rand() * TEX_SIZE | 0, 1, 1);
+}
+
+const MAP_TEX = {
+  // Cinder blocks in running bond
+  concrete: makeTex(64, 64, (g, R) => {
+    R('#5c5c5c', 0, 0, 64, 64); // mortar
+    for (let row = 0; row < 4; row++) {
+      for (let col = -1; col < 2; col++) {
+        const bx = col * 32 + (row % 2 ? 16 : 0), by = row * 16;
+        R('#7e7e7e', bx + 1, by + 1, 30, 14);
+        R('#8a8a8a', bx + 1, by + 1, 30, 2);
+        R('#6e6e6e', bx + 1, by + 13, 30, 2);
+      }
+    }
+    speckle(R, rng(1), 500, ['#727272', '#8c8c8c', '#6a6a6a', '#959595']);
+  }),
+  // Fabric cubicle panel: woven tan, plastic top rail, kick plate, aluminum edges
+  cubicle: makeTex(64, 64, (g, R) => {
+    R('#a88a5c', 0, 0, 64, 64);
+    for (let x = 0; x < 64; x += 2) R('rgba(0,0,0,0.06)', x, 0, 1, 64);
+    for (let y = 0; y < 64; y += 2) R('rgba(255,255,255,0.04)', 0, y, 64, 1);
+    speckle(R, rng(2), 700, ['#9c7e52', '#b49666', '#977a4e']);
+    R('#8a8478', 0, 0, 64, 5); R('#a49e90', 0, 0, 64, 1); R('#6c675c', 0, 5, 64, 1);
+    R('#5a554c', 0, 58, 64, 6);
+    R('#9a9a9a', 0, 0, 2, 64); R('#6a6a6a', 62, 0, 2, 64);
+  }),
+  // IT closet shelving: uprights, four shelves of boxes and binders
+  shelving: makeTex(64, 64, (g, R) => {
+    const r = rng(4), boxes = ['#8a6a3c', '#9a7a48', '#7a5c30', '#5a6a7a', '#c8c8c0'];
+    R('#1e2018', 0, 0, 64, 64);
+    for (let s = 0; s < 4; s++) {
+      const sy = s * 16;
+      for (let x = 5; x < 58;) {
+        const w = 5 + (r() * 12 | 0), h = 5 + (r() * 8 | 0);
+        if (x + w > 59) break;
+        if (r() < 0.8) {
+          R(boxes[r() * boxes.length | 0], x, sy + 14 - h, w, h);
+          R('rgba(0,0,0,0.25)', x + w - 1, sy + 14 - h, 1, h);
+          if (r() < 0.5) R('#e8e8e0', x + 1, sy + 16 - h, Math.min(4, w - 2), 2); // label
+        }
+        x += w + 1;
+      }
+      R('#6f7660', 0, sy + 14, 64, 2); R('#8a9278', 0, sy + 14, 64, 1);
+    }
+    R('#5f6650', 0, 0, 4, 64); R('#5f6650', 60, 0, 4, 64);
+    for (let y = 2; y < 64; y += 6) { R('#2a2e22', 1, y, 2, 2); R('#2a2e22', 61, y, 2, 2); }
+  }),
+  // DNS arena: purple panels with glowing circuit traces
+  arena: makeTex(64, 64, (g, R) => {
+    R('#34205a', 0, 0, 64, 64);
+    speckle(R, rng(5), 300, ['#2c1a4c', '#3c2666']);
+    R('#22123c', 0, 31, 64, 2); R('#22123c', 31, 0, 2, 64);
+    R('#4a3080', 0, 33, 64, 1); R('#4a3080', 33, 0, 1, 64);
+    const T = '#8a40ff', N = '#d0a0ff';
+    R(T, 8, 8, 16, 1); R(T, 24, 8, 1, 14); R(T, 24, 22, 4, 1); R(N, 27, 21, 3, 3);
+    R(T, 40, 44, 1, 12); R(T, 40, 44, 14, 1); R(N, 53, 43, 3, 3);
+    R(T, 6, 48, 18, 1); R(T, 6, 40, 1, 8); R(N, 5, 38, 3, 3);
+    R(T, 44, 10, 1, 12); R(N, 43, 21, 3, 3);
+  }),
+  // Boss door: red steel with ribs and rivets (frame, seams and lock light are drawn on top by drawDoorColumn)
+  bossDoor: makeTex(64, 64, (g, R) => {
+    R('#7a1616', 0, 0, 64, 64);
+    speckle(R, rng(6), 300, ['#6a1212', '#8a2020']);
+    for (let y = 4; y < 64; y += 12) { R('#5a0e0e', 6, y, 52, 1); R('#9a2a2a', 6, y + 1, 52, 1); }
+    for (const [x, y] of [[6, 1], [56, 1], [6, 61], [56, 61]]) R('#c04040', x, y, 2, 2);
+  }),
+  // Security door: brushed steel, recessed panel, wired-glass window
+  secDoor: makeTex(64, 64, (g, R) => {
+    const r = rng(7);
+    for (let y = 0; y < 64; y++) R(r() < 0.5 ? '#5c6772' : '#505a64', 0, y, 64, 1);
+    R('#3e4750', 8, 8, 48, 48);
+    for (let y = 9; y < 55; y++) R(r() < 0.5 ? '#66727e' : '#5c6874', 9, y, 46, 1);
+    R('#2a3036', 26, 16, 12, 10); R('#9ab0c0', 27, 17, 10, 8); R('#7a90a0', 27, 20, 10, 1); R('#7a90a0', 31, 17, 1, 8);
+  }),
+};
+
+// Server rack: 1U units with vents, drive bays and status LEDs. Two frames with different LEDs lit, for blinking.
+function rackTex(frame) {
+  return makeTex(64, 64, (g, R) => {
+    const r = rng(3), led = rng(10 + frame);
+    R('#121826', 0, 0, 64, 64);
+    R('#2c3446', 0, 0, 3, 64); R('#2c3446', 61, 0, 3, 64);
+    for (let y = 3; y < 61; y += 7) {
+      const kind = r() * 3 | 0;
+      R('#26324c', 5, y, 54, 6);
+      R('#34425f', 5, y, 54, 1);
+      if (kind === 0) for (let x = 8; x < 40; x += 3) R('#121826', x, y + 2, 2, 2);  // vents
+      else if (kind === 1) { R('#1a2236', 8, y + 2, 16, 3); R('#1a2236', 26, y + 2, 16, 3); } // drive bays
+      else R('#3c4a68', 8, y + 2, 26, 2);                                             // label strip
+      for (let i = 0; i < 3; i++) {
+        const on = led() < 0.6, amber = i === 2 && r() < 0.35;
+        R(amber ? (on ? '#ffb020' : '#4a3008') : (on ? '#30ff60' : '#0c3a18'), 46 + i * 4, y + 2, 2, 2);
+      }
+    }
+  });
+}
+
+// Wall type → animation frames, each [light face, dark face] (raySide 0 / 1)
+const WALL_FACE_DARK = 0.35;
+const faces = src => [src, tintTex(src, '#000', WALL_FACE_DARK)];
+const RACK_FRAMES = [faces(rackTex(0)), faces(rackTex(1))];
+const WALL_TEX = {
+  1: [faces(MAP_TEX.concrete)],
+  2: [faces(MAP_TEX.cubicle)],
+  3: RACK_FRAMES,
+  4: [faces(MAP_TEX.bossDoor)],
+  5: [faces(MAP_TEX.shelving)],
+  6: [faces(MAP_TEX.arena)],
+  7: [faces(MAP_TEX.secDoor)],
+  8: RACK_FRAMES, // override switch (panel drawn on top)
+};
+const RACK_BLINK_MS = 350;
+
+// Distance fog for walls: alpha grows with distance (quantized so fillStyle strings are reused)
+const FOG_RATE = 0.035, FOG_MAX = 0.6, FOG_STEPS = 32;
+const FOG_STYLES = Array.from({ length: FOG_STEPS + 1 }, (_, i) => `rgba(0,0,0,${(i / FOG_STEPS * FOG_MAX).toFixed(3)})`);
+
+// --- Floor textures + floor casting ---
+const FLOOR_SRC = [
+  // 0: office carpet tiles (alternating grain direction)
+  makeTex(64, 64, (g, R) => {
+    R('#2e271e', 0, 0, 64, 64);
+    for (let t = 0; t < 4; t++) {
+      const tx = (t % 2) * 32, ty = (t >> 1) * 32;
+      for (let i = 0; i < 16; i++) {
+        if ((t % 2) ^ (t >> 1)) R('rgba(255,255,255,0.03)', tx + i * 2, ty, 1, 32);
+        else R('rgba(255,255,255,0.03)', tx, ty + i * 2, 32, 1);
+      }
+    }
+    speckle(R, rng(8), 700, ['#272018', '#352d22', '#3a3226', '#241d16']);
+    R('#1f1912', 0, 0, 64, 1); R('#1f1912', 0, 0, 1, 64); R('#1f1912', 0, 32, 64, 1); R('#1f1912', 32, 0, 1, 64);
+  }),
+  // 1: Server Room raised floor, with perforated airflow tiles
+  makeTex(64, 64, (g, R) => {
+    for (let t = 0; t < 4; t++) {
+      const x = (t % 2) * 32, y = (t >> 1) * 32;
+      R('#26282c', x, y, 32, 32);
+      R('#4a4f57', x + 1, y + 1, 30, 30);
+      R('#555b64', x + 1, y + 1, 30, 1);
+      if (t === 0 || t === 3) for (let py = y + 5; py < y + 28; py += 3) for (let px = x + 5; px < x + 28; px += 3) R('#30333a', px, py, 1, 1);
+    }
+    speckle(R, rng(9), 200, ['#454a52', '#4f545c']);
+  }),
+  // 2: DNS arena, dark purple with a glowing grid
+  makeTex(64, 64, (g, R) => {
+    R('#1c1030', 0, 0, 64, 64);
+    speckle(R, rng(11), 250, ['#180c2a', '#24163c']);
+    R('#4a2488', 0, 0, 64, 1); R('#4a2488', 0, 0, 1, 64);
+    R('#3a1c6a', 0, 32, 64, 1); R('#3a1c6a', 32, 0, 1, 64);
+    R('#9a60ff', 0, 0, 1, 1); R('#9a60ff', 32, 32, 1, 1);
+  }),
+  // 3: IT closet sealed concrete
+  makeTex(64, 64, (g, R) => {
+    R('#3a3a37', 0, 0, 64, 64);
+    speckle(R, rng(12), 900, ['#333331', '#41413e', '#2e2e2c', '#474744']);
+    R('#2a2a28', 10, 20, 14, 1); R('#2a2a28', 23, 21, 8, 1); R('#2a2a28', 40, 50, 1, 9);
+  }),
+];
+const FLOOR_TEX = FLOOR_SRC.map(c => new Uint32Array(c.getContext('2d').getImageData(0, 0, TEX_SIZE, TEX_SIZE).data.buffer));
+
+// Which floor each map cell uses: arena, Server Room (incl. its doors), IT Closet, else office carpet
+const FLOOR_MAP = new Uint8Array(MAP_W * MAP_H);
+for (let y = 0; y < MAP_H; y++) {
+  for (let x = 0; x < MAP_W; x++) {
+    const i = y * MAP_W + x;
+    FLOOR_MAP[i] = ARENA[i] ? 2 : (y >= 16 && x <= 25) ? 1 : (x >= 29 && y <= 9) ? 3 : 0;
+  }
+}
+
+// Floor pixels are written into an offscreen buffer, then drawn with drawImage so shake / the death slump still apply
+const FLOOR_H = SCREEN_H - HALF_H;
+const floorCanvas = document.createElement('canvas');
+floorCanvas.width = SCREEN_W;
+floorCanvas.height = FLOOR_H;
+const floorCtx = floorCanvas.getContext('2d');
+const floorImg = floorCtx.createImageData(SCREEN_W, FLOOR_H);
+const floorBuf = new Uint32Array(floorImg.data.buffer);
+const floorFog = ctx.createLinearGradient(0, HALF_H, 0, HALF_H + 110); // darker toward the horizon
+floorFog.addColorStop(0, 'rgba(0,0,0,0.7)');
+floorFog.addColorStop(1, 'rgba(0,0,0,0)');
+
+// Classic floor casting: each screen row below the horizon is one distance; step across it in world space
+function drawFloor() {
+  const dx0 = player.dirX - player.planeX, dy0 = player.dirY - player.planeY;
+  const ddx = 2 * player.planeX / SCREEN_W, ddy = 2 * player.planeY / SCREEN_W;
+  for (let y = 0, i = 0; y < FLOOR_H; y++) {
+    const rowDist = HALF_H / (y + 0.5);
+    const stepX = rowDist * ddx, stepY = rowDist * ddy;
+    let fx = player.x + rowDist * dx0, fy = player.y + rowDist * dy0;
+    for (let x = 0; x < SCREEN_W; x++, i++) {
+      const cx = Math.floor(fx), cy = Math.floor(fy);
+      const tex = FLOOR_TEX[cx >= 0 && cy >= 0 && cx < MAP_W && cy < MAP_H ? FLOOR_MAP[cy * MAP_W + cx] : 0];
+      floorBuf[i] = tex[((fy * TEX_SIZE) & 63) * TEX_SIZE + ((fx * TEX_SIZE) & 63)];
+      fx += stepX;
+      fy += stepY;
+    }
+  }
+  floorCtx.putImageData(floorImg, 0, 0);
+  ctx.drawImage(floorCanvas, 0, HALF_H);
+  ctx.fillStyle = floorFog;
+  ctx.fillRect(0, HALF_H, SCREEN_W, FLOOR_H);
+}
+
 // --- Render ---
 function render() {
   // Screen shake offsets the 3D view and weapon; HUD stays put
@@ -1807,11 +2015,13 @@ function render() {
   ctx.fillStyle = '#1a1a2e';
   ctx.fillRect(-200, -200, SCREEN_W + 400, HALF_H + 200);
 
-  // Floor — slightly lighter, carpet feel
+  // Floor: flat backdrop (shows only past the screen edges during the death slump), then the textured floor
   ctx.fillStyle = '#282018';
   ctx.fillRect(-200, HALF_H, SCREEN_W + 400, HALF_H + 200);
+  drawFloor();
 
   // Cast one ray per screen column
+  const blink = performance.now() / RACK_BLINK_MS | 0;
   for (let x = 0; x < SCREEN_W; x++) {
     const camX = 2 * x / SCREEN_W - 1;
     const dist = castRay(player.x, player.y,
@@ -1823,8 +2033,11 @@ function render() {
     const y0 = Math.max(0, HALF_H - lineH / 2 | 0);
     const y1 = Math.min(SCREEN_H - 1, HALF_H + lineH / 2 | 0);
 
-    const cols = WALL_COLORS[rayHit] || WALL_COLORS[1];
-    ctx.fillStyle = cols[raySide]; // side 0 (EW) = light, side 1 (NS) = dark
+    // One texture column, stretched to the wall height; side 1 (NS faces) uses the darker copy
+    const frames = WALL_TEX[rayHit] || WALL_TEX[1];
+    const tex = frames[(blink + rayMapX * 7 + rayMapY * 13) % frames.length][raySide];
+    ctx.drawImage(tex, rayWallX * TEX_SIZE | 0, 0, 1, TEX_SIZE, x, HALF_H - lineH / 2, 1, lineH);
+    ctx.fillStyle = FOG_STYLES[Math.min(FOG_STEPS, dist * FOG_RATE / FOG_MAX * FOG_STEPS | 0)];
     ctx.fillRect(x, y0, 1, y1 - y0 + 1);
     if (DOOR_TYPES.includes(rayHit)) drawDoorColumn(x, y0, y1, lineH, rayHit);
     else if (rayHit === SWITCH && raySide === 0 && player.dirX + player.planeX * camX < 0) drawSwitchColumn(x, lineH);

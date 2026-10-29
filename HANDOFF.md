@@ -169,14 +169,35 @@ The user cancelled "more ammo before the boss" and "timed boss-fight resupply". 
 
 ---
 
-## Remaining chunks
+### Chunk 8 — Map textures ✅
+All procedural (64×64 canvases drawn once with `makeTex`, seeded by `rng()` + `speckle()` so they look the same on every load). No image files. Lives in the `// --- Map textures` section just above `render()`.
+- **Walls** (`MAP_TEX`, `rackTex(frame)`, `WALL_TEX`):
+  - concrete = cinder blocks
+  - cubicle = woven fabric with a top rail, kick plate and aluminum edges
+  - server rack = 1U units with vents, drive bays and green/amber LEDs
+  - shelving = boxes and binders on olive shelves
+  - arena = purple panels with glowing circuit traces
+  - boss door = ribbed red steel
+  - security door = brushed steel with a wired-glass window
+  - override switch = rack texture with its panel drawn on top
+- **How walls draw:**
+  - `WALL_TEX[type]` is a list of animation frames, each `[light face, dark face]`; the dark copy is a `tintTex` at `WALL_FACE_DARK`.
+  - The renderer `drawImage`s one texture column per screen column (`rayWallX`), stretched to the wall height.
+  - Racks have 2 frames, swapped every `RACK_BLINK_MS`, offset per cell (`castRay` now also sets `rayMapX/rayMapY`), so the LEDs blink out of sync.
+  - Distance fog is a quantized black overlay per column (`FOG_RATE`, `FOG_MAX`, `FOG_STYLES`), drawn *before* the door / switch overlays so lock lights stay bright.
+  - `WALL_COLORS` is removed; the minimap still uses `MINIMAP_COLORS`.
+- **Floors** (`FLOOR_SRC` → `FLOOR_TEX` pixel arrays, `FLOOR_MAP` per cell):
+  - textures: 0 office carpet tiles, 1 Server Room raised floor with perforated tiles, 2 arena purple grid, 3 IT closet concrete
+  - region rules: `ARENA` mask → arena; `y ≥ 16 && x ≤ 25` → Server Room (incl. its doors and the boss door cell); `x ≥ 29 && y ≤ 9` → closet; else carpet
+  - `drawFloor()` does classic floor casting into a `Uint32Array` over an offscreen `ImageData`, then `drawImage`s it, so shake and the death slump still apply. A gradient darkens it toward the horizon.
+- **Ceiling** is still flat `#1a1a2e` (user's call).
+- **Performance** (Claude browser pane): full frame ≈ 7.6–7.9 ms, floor ≈ 2.6 ms of that, inside the 16.7 ms budget for 60 fps. If slower machines struggle, cast the floor at half resolution.
+- Verified visually: office, Server Room, IT Closet, arena, boss door, security door, override switch; no console errors.
 
-### Chunk 8 — Map textures (NEXT)
-The world is flat-colored, so add basic procedural textures, drawn in code like the sprites (no image files):
-- **Walls:** concrete (`#`), cubicle fabric (`=`), server racks with blinking LEDs (`S`), IT closet shelving (`%`), purple arena walls (`@`), and doors with panel detail (boss `D`, security `K`), keeping the existing lock lights / stripes. The override switch (`X`) keeps its panel on a rack texture. Sample a texture column per screen column using `rayWallX`; shade by wall face and distance so depth reads better.
-- **Floors:** textured via per-pixel floor casting into an `ImageData` buffer. Office carpet, a different floor in the Server Room (raised-floor tiles) and in the arena (DNS purple). Pick the floor texture by map region (e.g. the `ARENA` mask; the Server Room bounds).
-- **Ceiling stays a flat color** (user's call; maybe later).
-- **Performance:** floor casting touches ~200k pixels per frame. Measure the frame time and keep it smooth (lower floor resolution or skip distant rows if needed).
+---
+
+## Remaining chunks
+None planned. Ideas: textured ceiling (office ceiling tiles / server room cable trays), environment props as sprites (desks, plants, water cooler), music, sharing the game (itch.io private draft → public).
 
 ---
 
@@ -186,12 +207,13 @@ The world is flat-colored, so add basic procedural textures, drawn in code like 
 LEVEL[]          — map as strings → MAP[][] (40×30), LEVEL_SPAWNS, PLAYER_START, BOSS_DOOR, BOSS_SPAWN
 player{}         — x, y, dirX, dirY, planeX, planeY
 game{}           — health, ammo, cannonAmmo, hasCannon, weapon, kills, over, won, bossTriggered, boss, flushes, msg…
-WEAPONS{}        — per-weapon label / ammo keys / COOL_MS / KICK
+WEAPONS{}        — per-weapon slot / short / key / ammo keys / COOL_MS / KICK / voiceEmpty
 weapon{}         — anim state: idle | firing | cooling | lowering | raising; next, kickY, flash
 zBuf[]           — Float64Array(800), perpWallDist per column
 
 enemies[] (incl. the DNS) / projectiles[] (ink | rocket | nx) / explosions[] / pickups[] / effects[]
-ENEMY_TYPES{}    — per-type stats; BOSS_PHASES{}; PICKUPS{} — per-kind tex/scale/apply; TEX{} — procedural textures
+ENEMY_TYPES{}    — per-type stats; BOSS_PHASES{}; PICKUPS{} — per-kind tex/scale/apply; TEX{} — sprite textures
+MAP_TEX{} / WALL_TEX{} / FLOOR_TEX[] / FLOOR_MAP — wall + floor textures; drawFloor() — floor casting
 
 shoot()          — keyboard: 7 hitscan pellets → damageEnemy(); cannon: spawns rocket
 explode()        — splash damage (enemies + player self-damage)
@@ -204,7 +226,7 @@ audio{} / SFX{} / sfx() — synthesized effects (tone(), noise()); VOICE{} / say
 startGame() / restart() / canRestart() — title → play → death/victory → R
 
 update()         — title pan | death stamp | victory typing → player → weapon anim → updateEnemies() → updateProjectiles() → updatePickups() → checkBossTrigger()
-render()         — [shake + death slump] ceiling → floor → raycaster (+drawDoorColumn) → drawSprites() → (title: drawTitle()) → drawWeapon() → drawKeycaps() [/shake] → drawScreenFlash() → drawDeathOverlay() | drawVictoryOverlay() | (drawGlitch() → drawCrosshair() → drawDamageDirs() → drawHUD() → drawBossBar() → drawMinimap() → drawServfail()) → drawSubtitles()
+render()         — [shake + death slump] ceiling → drawFloor() → textured raycaster (+fog, drawDoorColumn / drawSwitchColumn) → drawSprites() → (title: drawTitle()) → drawWeapon() → drawKeycaps() [/shake] → drawScreenFlash() → drawDeathOverlay() | drawVictoryOverlay() | (drawGlitch() → drawCrosshair() → drawDamageDirs() → drawHUD() → drawBossBar() → drawMinimap() → drawServfail()) → drawSubtitles()
 ```
 
 ---
