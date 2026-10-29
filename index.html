@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8">
-  <title>DNS: The Reckoning</title>
+  <title>ENTECH: The Closer</title>
   <style>
     * { margin: 0; padding: 0; box-sizing: border-box; }
     body { background: #000; display: flex; flex-direction: column; justify-content: center; align-items: center; height: 100vh; overflow: hidden; }
@@ -2156,16 +2156,16 @@ function drawTitle() {
 
   // Title with an RGB split that jitters now and then
   ctx.font = 'bold 22px monospace';
-  ctx.fillStyle = '#9a40ff';
-  ctx.fillText('D N S :', cx, 82);
+  ctx.fillStyle = '#2aa4ff'; // bright blue
+  ctx.fillText('E N T E C H :', cx, 82);
   const g = Math.random() < 0.06 ? (Math.random() - 0.5) * 12 : 0;
   ctx.font = 'bold 58px monospace';
   ctx.fillStyle = 'rgba(255,40,80,0.8)';
-  ctx.fillText('THE RECKONING', cx - 3 + g, 130);
+  ctx.fillText('THE CLOSER', cx - 3 + g, 130);
   ctx.fillStyle = 'rgba(60,230,255,0.8)';
-  ctx.fillText('THE RECKONING', cx + 3 - g, 130);
+  ctx.fillText('THE CLOSER', cx + 3 - g, 130);
   ctx.fillStyle = '#f0f0f0';
-  ctx.fillText('THE RECKONING', cx, 130);
+  ctx.fillText('THE CLOSER', cx, 130);
   ctx.font = 'italic 14px monospace';
   ctx.fillStyle = '#a090c0';
   ctx.fillText("It's always DNS.", cx, 172);

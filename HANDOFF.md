@@ -1,8 +1,8 @@
-# DNS: The Reckoning — Session Handoff
+# ENTECH: The Closer — Session Handoff
 
 ## What this is
 IT-themed Doom clone built in a single HTML file using canvas raycasting (no libraries).
-Working title: **DNS: The Reckoning**. Player is an IT tech who fights office equipment and ultimately battles the DNS boss.
+Title: **ENTECH: The Closer** (renamed from "DNS: The Reckoning"; the repo folder still has the old name). Title screen: "E N T E C H :" in bright blue `#2aa4ff` over "THE CLOSER". Player is an IT tech who fights office equipment and ultimately battles the DNS boss.
 
 **File:** `C:\Users\JohnMiller\Documents\DNS The Reckoning\index.html` (own git repo, separate from the Solitaire project)
 
@@ -105,7 +105,7 @@ Working title: **DNS: The Reckoning**. Player is an IT tech who fights office eq
 - **Scripted fight** (perfect aim, never moving, infinite keyboard ammo, damage tallied not applied): won in 27 s with 39 keyboard blasts; phase 2 at 10 s, phase 3 at 18 s; 3 Shadow IT spawned; standing still costs ≈17 HP/s — a real player must dodge and lean on the cannon (39 blasts is more than a full 25-ticket load).
 
 ### Chunk 6 — Polish ✅
-- **Title screen** (`drawTitle`, `game.started = false`): the camera slowly pans around the office behind an RGB-split "THE RECKONING" title, a terminal teaser (`nslookup` timing out), the controls, and a blinking "PRESS ANY KEY TO START". Any key or a click starts (`startGame()`); a click also grabs the mouse. **N** toggles sound here too, without starting.
+- **Title screen** (`drawTitle`, `game.started = false`): the camera slowly pans around the office behind an RGB-split "THE CLOSER" title (originally "THE RECKONING"), a terminal teaser (`nslookup` timing out), the controls, and a blinking "PRESS ANY KEY TO START". Any key or a click starts (`startGame()`); a click also grabs the mouse. **N** toggles sound here too, without starting.
 - **Death screen** (`drawDeathOverlay`): the view slumps sideways to the floor, and the weapon drops away. "YOU'VE BEEN CLOSED." appears over a helpdesk ticket whose fields fill in one by one: random `#INC` number, subject, cause (`game.killedBy`, from `hurtPlayer(dmg, x, y, cause)` → `DEATH_CAUSES`), tickets closed, time on shift, and a random joke `RESOLUTIONS` entry. A red **CLOSED** stamp slams down at `STAMP_AT` 1.3 s with a shake and thud. R works after that.
 - **Victory screen** (`drawVictoryOverlay`): after SERVFAIL, the screen fades to a terminal. `ipconfig /flushdns`, `nslookup`, `ping` are typed with key clicks and their output resolves (`VICTORY_TERM`/`VICTORY_SCHED`). Then a glowing **CONNECTION ESTABLISHED.**, stats (tickets closed, time to resolve, SLA remaining, rank from `victoryRank()`), "It was DNS. It's always DNS." and R to play again (after `VICTORY_BANNER_AT`).
 - **Restart:** R → `restart()` sets a `sessionStorage` flag and reloads, which skips the title (`startGame(true)`). Audio resumes on the next key or click.
