@@ -2817,119 +2817,237 @@ function drawWeapon() {
   ctx.restore();
 }
 
-function drawKeyboard() {
-  const bob  = weapon.state === 'idle' ? Math.sin(performance.now() * 0.003) * 2 : 0;
-  const W = 280, H = 88;
-  const cx  = SCREEN_W / 2;
-  const y   = SCREEN_H - 108 + weapon.kickY + bob;
-  const x   = cx - W / 2;
+// --- First-person weapons: chunky pixel art ---
+// Each weapon is drawn at 1/WPX resolution into a small canvas and blown up with nearest-neighbor, so it gets
+// Doom's chunky pixels. The bodies, gloved hands and suit sleeves are built once (shaded, with a dark outline);
+// moving parts (keys, rocket, muzzle flash, smoke, RGB glow) go into a scratch canvas each frame, which is then
+// tinted by the room you're in (and red when you're hit) before scaling up.
+const WPX = 4;
+const GLOVE = '#18181b', GLOVE_HI = '#40404a', SLEEVE = '#1c1f26', SLEEVE_HI = '#2c303a', CUFF = '#d6d6d2';
 
-  // Muzzle flash — radial glow drawn before weapon so it sits behind it
+// 1 px dark outline around everything opaque, so the weapon reads as a solid object on any background
+function outlineTex(c) {
+  const g = c.getContext('2d'), w = c.width, h = c.height, img = g.getImageData(0, 0, w, h), d = img.data, a = new Uint8Array(w * h);
+  for (let i = 0; i < w * h; i++) a[i] = d[i * 4 + 3] > 0 ? 1 : 0;
+  for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) {
+    if (a[y * w + x]) continue;
+    if ((x > 0 && a[y * w + x - 1]) || (x < w - 1 && a[y * w + x + 1]) || (y > 0 && a[(y - 1) * w + x]) || (y < h - 1 && a[(y + 1) * w + x])) {
+      const i = (y * w + x) * 4;
+      d[i] = 10; d[i + 1] = 10; d[i + 2] = 12; d[i + 3] = 255;
+    }
+  }
+  g.putImageData(img, 0, 0);
+  return c;
+}
+
+// A metal tube narrowing toward the top, shaded as a cylinder lit from the upper left, written straight into pixels
+function shadeTube(img, cx, y0, y1, hwAt, base, rand) {
+  const W = img.width, d = img.data;
+  for (let y = y0; y < y1; y++) {
+    const hw = hwAt(y);
+    for (let x = Math.max(0, Math.ceil(cx - hw)); x <= Math.min(W - 1, Math.floor(cx + hw)); x++) {
+      const u = (x + 0.5 - cx) / hw, n = Math.sqrt(Math.max(0, 1 - u * u));
+      const k = 0.3 + 0.62 * n * (0.8 - 0.3 * u) + 0.5 * Math.exp(-(((u + 0.42) / 0.13) ** 2)) + (rand() - 0.5) * 0.06;
+      const i = (y * W + x) * 4;
+      d[i] = Math.min(255, base[0] * k); d[i + 1] = Math.min(255, base[1] * k); d[i + 2] = Math.min(255, base[2] * k); d[i + 3] = 255;
+    }
+  }
+}
+
+// Scratch canvas (sized for the bigger weapon) + room tint
+const WBUF_W = 104, WBUF_H = 92;
+const wbuf = makeTex(WBUF_W, WBUF_H, () => {}), wctx = wbuf.getContext('2d');
+const AREA_TINT = [null, [70, 130, 255, 0.16], [160, 70, 255, 0.22], [255, 190, 110, 0.08]]; // by FLOOR_MAP: office, Server Room, arena, IT closet
+const wtint = [0, 0, 0, 0];
+function blitWeapon(w, h, x, y) {
+  const target = AREA_TINT[FLOOR_MAP[Math.floor(player.y) * MAP_W + Math.floor(player.x)]] || [wtint[0], wtint[1], wtint[2], 0];
+  for (let i = 0; i < 4; i++) wtint[i] += (target[i] - wtint[i]) * 0.06; // ease between rooms
+  wctx.globalCompositeOperation = 'source-atop';
+  if (wtint[3] > 0.005) { wctx.fillStyle = `rgba(${wtint[0] | 0},${wtint[1] | 0},${wtint[2] | 0},${wtint[3]})`; wctx.fillRect(0, 0, w, h); }
+  if (game.hurt > 0) { wctx.fillStyle = `rgba(255,40,30,${game.hurt * 0.45})`; wctx.fillRect(0, 0, w, h); }
+  wctx.globalCompositeOperation = 'source-over';
+  ctx.drawImage(wbuf, 0, 0, w, h, x, y, w * WPX, h * WPX);
+}
+const idleBob = () => weapon.state === 'idle' ? Math.sin(performance.now() * 0.003) * 2 : 0;
+
+// --- Closing Cannon (sprite 104×64; the scratch canvas adds 28 rows above it for the muzzle flash) ---
+const CANNON_W = 104, CANNON_H = 64, CANNON_CX = 52, CANNON_TOP = 28;
+const cannonHW = y => 15 + 9 * (y - 12) / 52; // tube half-width: 15 at the muzzle, widening toward you
+const CANNON_SPRITE = (() => {
+  const c = makeTex(CANNON_W, CANNON_H, () => {}), g = c.getContext('2d'), img = g.createImageData(CANNON_W, CANNON_H), r = rng(21);
+  const R = (col, x, y, w, h) => { g.fillStyle = col; g.fillRect(x, y, w, h); };
+  shadeTube(img, CANNON_CX, 12, CANNON_H, cannonHW, [96, 100, 86], r);                                // gunmetal-olive tube
+  shadeTube(img, CANNON_CX, 28, 41, cannonHW, [176, 32, 28], r);                                       // red label band
+  for (const [a, b] of [[17, 20], [43, 46]]) shadeTube(img, CANNON_CX, a, b, y => cannonHW(y) + 1, [66, 68, 60], r); // bolted rings
+  g.putImageData(img, 0, 0);
+  for (const yy of [18, 44]) for (const u of [-0.75, -0.4, 0, 0.4, 0.75]) R('#b4b6aa', Math.round(CANNON_CX + u * cannonHW(yy)), yy, 1, 1); // rivets
+  for (let i = 0; i < 16; i++) {                                                                        // scratches
+    const yy = 21 + (r() * 40 | 0);
+    if (yy < 28 || yy > 40) R('rgba(225,230,215,0.35)', Math.round(CANNON_CX + (r() * 1.6 - 0.8) * cannonHW(yy)), yy, 1 + (r() * 2 | 0), 1);
+  }
+  R('#232527', 48, 21, 9, 6); R('#55595e', 48, 21, 9, 1); R('#0c0d0e', 51, 21, 3, 2);                 // rear sight block
+  R('#232527', 51, 14, 3, 3);                                                                           // front sight post
+  g.fillStyle = '#7c8072'; g.beginPath(); g.ellipse(CANNON_CX, 12, 15.5, 5, 0, 0, Math.PI * 2); g.fill(); // muzzle rim
+  g.fillStyle = '#a7ab9b'; g.fillRect(CANNON_CX - 12, 7, 10, 1);                                       // rim glint
+  g.fillStyle = '#0a0a0b'; g.beginPath(); g.ellipse(CANNON_CX, 12, 12, 3.4, 0, 0, Math.PI * 2); g.fill(); // bore
+  // Right hand on the front grip: fingers wrap over the tube's right edge; shirt cuff and suit sleeve below
+  const er = y => Math.round(CANNON_CX + cannonHW(y));
+  R(GLOVE, er(42) - 1, 37, 8, 14);
+  for (const fy of [38, 41, 44, 47]) { R(GLOVE, er(fy) - 6, fy, 7, 2); R(GLOVE_HI, er(fy) - 6, fy, 5, 1); }
+  R(CUFF, er(51) - 1, 51, 10, 2);
+  for (let y = 53; y < CANNON_H; y++) { R(SLEEVE, er(y) - 1, y, 12 + (y - 53), 1); R(SLEEVE_HI, er(y) - 1, y, 2, 1); }
+  // Left hand underneath on the left, thumb over the top; cuff and sleeve
+  const el = y => Math.round(CANNON_CX - cannonHW(y));
+  R(GLOVE, el(47) - 7, 45, 10, 8); R(GLOVE, el(45) + 1, 45, 5, 2); R(GLOVE_HI, el(45) + 1, 45, 4, 1); R(GLOVE_HI, el(47) - 6, 46, 7, 1);
+  R(CUFF, el(53) - 8, 53, 10, 2);
+  for (let y = 55; y < CANNON_H; y++) R(SLEEVE, el(y) - 10 - (y - 55), y, 12 + (y - 55), 1);
+  return outlineTex(c);
+})();
+// Two muzzle-flash variants (alternate shots), a jagged star in orange → yellow → white
+const CANNON_FLASH = [0, 1].map(v => makeTex(44, 30, g => {
+  const r = rng(30 + v);
+  const star = (rad, col) => {
+    g.fillStyle = col;
+    g.beginPath();
+    for (let i = 0; i < 16; i++) {
+      const a = i / 16 * Math.PI * 2, l = (i % 2 ? 0.45 : 1) * rad * (0.7 + r() * 0.5);
+      g.lineTo(22 + Math.cos(a) * l, 18 + Math.sin(a) * l * 0.7);
+    }
+    g.fill();
+  };
+  star(20, '#ff6a10'); star(14, '#ffc030'); star(8, '#fff6c0');
+}));
+const CANNON_MUZZLE_Y = 300; // screen y of the muzzle at rest
+
+function drawCannon() {
+  const now = performance.now(), cx = SCREEN_W / 2;
+  const top = CANNON_MUZZLE_Y - (CANNON_TOP + 12) * WPX + weapon.kickY + idleBob(), left = cx - CANNON_W * WPX / 2;
+  const muzzleY = top + (CANNON_TOP + 12) * WPX;
+
+  if (weapon.flash > 0) { // smooth light bloom behind the pixel flash
+    const grad = ctx.createRadialGradient(cx, muzzleY, 0, cx, muzzleY, 170);
+    grad.addColorStop(0, `rgba(255,150,50,${weapon.flash * 0.75})`);
+    grad.addColorStop(1, 'rgba(255,80,0,0)');
+    ctx.fillStyle = grad;
+    ctx.beginPath();
+    ctx.ellipse(cx, muzzleY, 170, 110, 0, 0, Math.PI * 2);
+    ctx.fill();
+  }
+
+  wctx.clearRect(0, 0, WBUF_W, WBUF_H);
+  wctx.drawImage(CANNON_SPRITE, 0, CANNON_TOP);
+  const my = CANNON_TOP + 12;
+  if (game.cannonAmmo > 0 && weapon.state !== 'firing') {              // the next round's nose in the bore
+    wctx.fillStyle = '#b8241c'; wctx.beginPath(); wctx.ellipse(CANNON_CX, my + 0.5, 6, 2, 0, 0, Math.PI * 2); wctx.fill();
+    wctx.fillStyle = '#ff6a50'; wctx.fillRect(CANNON_CX - 3, my - 1, 2, 1);
+  }
+  const since = now - weapon.fireAt;                                    // smoke curling out after a shot
+  for (let i = 0; i < 3; i++) {
+    const tp = (since - 60 - i * 110) / 900;
+    if (tp <= 0 || tp >= 1) continue;
+    wctx.fillStyle = `rgba(150,150,150,${0.55 * (1 - tp)})`;
+    wctx.beginPath();
+    wctx.arc(CANNON_CX + Math.sin(i * 2.1 + tp * 4) * 4, my - 4 - tp * 26, 3 + tp * 6, 0, Math.PI * 2);
+    wctx.fill();
+  }
   if (weapon.flash > 0) {
-    const grad = ctx.createRadialGradient(cx, y - 20, 0, cx, y - 20, 190);
+    wctx.globalAlpha = weapon.flash;
+    wctx.drawImage(CANNON_FLASH[(weapon.fireAt / 7 | 0) % 2], CANNON_CX - 22, my - 20);
+    wctx.globalAlpha = 1;
+  }
+  blitWeapon(CANNON_W, CANNON_TOP + CANNON_H, left, top);
+
+  // Band label, drawn at full resolution so it stays readable
+  const bandY = top + (CANNON_TOP + 28) * WPX;
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  ctx.font = 'bold 16px monospace';
+  ctx.lineJoin = 'round';
+  ctx.lineWidth = 4;
+  ctx.strokeStyle = '#3a0806';
+  ctx.fillStyle = '#fff2dc';
+  for (const [text, dy] of [['CLOSE', 15], ['W/O EMAIL', 37]]) {
+    ctx.strokeText(text, cx, bandY + dy);
+    ctx.fillText(text, cx, bandY + dy);
+  }
+  ctx.textAlign = 'left';
+  ctx.textBaseline = 'alphabetic';
+}
+
+// --- Keyboard (96×40): a mechanical keyboard held in both gloved hands, far edge narrower ---
+const KB_W = 96, KB_H = 40;
+const kbL = y => 14 - 8 * (y - 6) / 29, kbR = y => 82 + 8 * (y - 6) / 29; // case edges (perspective taper)
+const KB_ROWS = [[8, 4, 14], [13, 4, 13], [18, 5, 13], [24, 5, 12], [30, 5, 0]]; // [y, height, keys]; 0 = spacebar row
+const KEYBOARD_BASE = outlineTex(makeTex(KB_W, KB_H, (g, R) => {
+  for (let y = 6; y < 36; y++) {
+    const l = Math.round(kbL(y)), r = Math.round(kbR(y));
+    R('#1c1d21', l, y, r - l, 1); R('#2c2e33', l, y, 1, 1); R('#2c2e33', r - 1, y, 1, 1);
+  }
+  R('#3a3c42', Math.round(kbL(6)), 6, Math.round(kbR(6) - kbL(6)), 1);               // far edge highlight
+  R('#26272c', 6, 36, 84, 1); R('#111216', 6, 37, 84, 3);                              // front face
+  for (const [x, y] of [[47, 5], [46, 4], [45, 3], [43, 2], [41, 2], [39, 1], [37, 1], [35, 0], [33, 0]]) R('#2a2b30', x, y, 2, 1); // cable
+}));
+const KEYBOARD_HANDS = outlineTex(makeTex(KB_W, KB_H, (g, R) => {
+  for (const flip of [false, true]) {
+    const H = (col, x, y, w, h) => R(col, flip ? KB_W - x - w : x, y, w, h);
+    H('#232328', 2, 14, 9, 16);                                                         // palm on the side
+    for (const fy of [15, 19, 23]) { H(GLOVE_HI, 1, fy, 8, 1); H('#121215', 1, fy + 3, 8, 1); } // fingers wrapping underneath
+    H('#232328', 8, 16, 8, 4); H(GLOVE_HI, 9, 16, 6, 1); H('#5a5a66', 14, 17, 2, 1);   // thumb over the top, lit tip
+    H(CUFF, 1, 30, 10, 2);                                                             // shirt cuff
+    H(SLEEVE, 0, 32, 12, 8); H(SLEEVE_HI, 2, 32, 2, 8);                                // suit sleeve
+  }
+}));
+
+// Keys, drawn each frame: 3D caps (top face + darker front edge); on a blast they press down in a wave from the middle out
+function drawKeys(g, pressT) {
+  const R = (col, x, y, w, h) => { g.fillStyle = col; g.fillRect(x, y, w, h); };
+  KB_ROWS.forEach(([y, h, n], ri) => {
+    const l = kbL(y + h / 2) + 3, r = kbR(y + h / 2) - 3;
+    const units = n ? Array(n).fill(1) : [1, 1, 1, 6, 1, 1, 1];
+    const unitW = (r - l - (units.length - 1)) / units.reduce((a, b) => a + b, 0);
+    let x = l;
+    units.forEach((u, ki) => {
+      const x0 = Math.round(x), x1 = Math.round(x + u * unitW), dn = Math.abs((x0 + x1) / 2 - KB_W / 2) / (KB_W / 2);
+      const down = pressT >= 0 && Math.abs(dn - pressT) < 0.18;
+      const accent = ri === 0 && ki === 0 ? 'esc' : ri === 2 && ki === units.length - 1 ? 'enter' : null;
+      const [topC, frontC] = accent === 'esc' ? ['#ff7a45', '#a8401c'] : accent === 'enter' ? ['#2aa4ff', '#16608f'] : ['#4b4d54', '#26272b'];
+      if (down) R(frontC, x0, y + 1, x1 - x0, h - 1);
+      else {
+        R(topC, x0, y, x1 - x0, h - 1);
+        R(frontC, x0, y + h - 1, x1 - x0, 1);
+        if (!accent && x1 - x0 >= 3) R('#8e9099', x0 + 1, y + 1, 1, 1);                 // legend
+      }
+      x += u * unitW + 1;
+    });
+  });
+}
+
+function drawKeyboard() {
+  const now = performance.now(), cx = SCREEN_W / 2;
+  const top = SCREEN_H - 10 - KB_H * WPX + weapon.kickY + idleBob(), left = cx - KB_W * WPX / 2;
+
+  if (weapon.flash > 0) { // muzzle-flash bloom behind the keyboard
+    const fy = top + 4 * WPX;
+    const grad = ctx.createRadialGradient(cx, fy, 0, cx, fy, 190);
     grad.addColorStop(0,   `rgba(255,255,220,${weapon.flash * 0.95})`);
     grad.addColorStop(0.3, `rgba(255,220,80,${weapon.flash * 0.7})`);
     grad.addColorStop(1,   'rgba(255,160,40,0)');
     ctx.fillStyle = grad;
     ctx.beginPath();
-    ctx.ellipse(cx, y - 20, 190, 120, 0, 0, Math.PI * 2);
+    ctx.ellipse(cx, fy, 190, 120, 0, 0, Math.PI * 2);
     ctx.fill();
   }
 
-  // Drop shadow
-  ctx.fillStyle = 'rgba(0,0,0,0.5)';
-  ctx.fillRect(x + 5, y + 5, W, H);
-
-  // Keyboard body
-  ctx.fillStyle = '#181818';
-  ctx.fillRect(x, y, W, H);
-  ctx.fillStyle = '#242424';
-  ctx.fillRect(x + 2, y + 2, W - 4, H - 4);
-
-  // Key rows [count, yOffset, keyW, keyH]
-  const rows = [
-    [13, 7,  18, 13],
-    [13, 25, 18, 13],
-    [12, 43, 19, 13],
-    [11, 61, 20, 13],
-  ];
-  for (const [n, yo, kw, kh] of rows) {
-    const totalW = n * kw + (n - 1) * 2;
-    const sx = x + (W - totalW) / 2;
-    for (let i = 0; i < n; i++) {
-      const kx = sx + i * (kw + 2), ky = y + yo;
-      ctx.fillStyle = '#383838';
-      ctx.fillRect(kx, ky, kw, kh);
-      ctx.fillStyle = '#484848';
-      ctx.fillRect(kx, ky, kw - 1, 3);
-      ctx.fillStyle = '#282828';
-      ctx.fillRect(kx, ky + kh - 2, kw - 1, 2);
-    }
-  }
-  // Spacebar
-  const sbW = W - 90;
-  ctx.fillStyle = '#383838';
-  ctx.fillRect(x + 45, y + 76, sbW, 10);
-  ctx.fillStyle = '#484848';
-  ctx.fillRect(x + 45, y + 76, sbW, 3);
-}
-
-// Closing Cannon: chunky launcher tube seen from behind, red "CLOSED" band, round loaded in the muzzle
-function drawCannon() {
-  const bob = weapon.state === 'idle' ? Math.sin(performance.now() * 0.003) * 2 : 0;
-  const cx  = SCREEN_W / 2;
-  const y   = SCREEN_H - 150 + weapon.kickY + bob; // muzzle line
-
-  if (weapon.flash > 0) {
-    const grad = ctx.createRadialGradient(cx, y, 0, cx, y, 150);
-    grad.addColorStop(0, `rgba(255,140,40,${weapon.flash * 0.75})`);
-    grad.addColorStop(1, 'rgba(255,80,0,0)');
-    ctx.fillStyle = grad;
-    ctx.beginPath();
-    ctx.ellipse(cx, y, 150, 100, 0, 0, Math.PI * 2);
-    ctx.fill();
-  }
-
-  const trap = (top, bottom, topW, bottomW) => {
-    ctx.beginPath();
-    ctx.moveTo(cx - bottomW / 2, bottom); ctx.lineTo(cx - topW / 2, top);
-    ctx.lineTo(cx + topW / 2, top);       ctx.lineTo(cx + bottomW / 2, bottom);
-    ctx.closePath(); ctx.fill();
-  };
-  const widthAt = dy => 96 + (dy / 160) * 64; // tube widens toward the viewer
-
-  // Tube
-  ctx.fillStyle = '#34373c';
-  trap(y, y + 160, 96, 160);
-  ctx.fillStyle = '#464a51';
-  ctx.beginPath();
-  ctx.moveTo(cx - 80, y + 160); ctx.lineTo(cx - 48, y); ctx.lineTo(cx - 30, y); ctx.lineTo(cx - 52, y + 160);
-  ctx.closePath(); ctx.fill();
-
-  // Red band with stamp label
-  ctx.fillStyle = '#b3201c';
-  trap(y + 46, y + 72, widthAt(46), widthAt(72));
-  ctx.fillStyle = '#fff';
-  ctx.font = 'bold 13px monospace';
-  ctx.textAlign = 'center';
-  ctx.textBaseline = 'middle';
-  ctx.fillText('CLOSED', cx, y + 60);
-  ctx.textAlign = 'left';
-  ctx.textBaseline = 'alphabetic';
-
-  // Grip
-  ctx.fillStyle = '#1e2023';
-  ctx.fillRect(cx + 30, y + 100, 26, 60);
-
-  // Muzzle
-  ctx.fillStyle = '#202225';
-  ctx.beginPath(); ctx.ellipse(cx, y, 48, 12, 0, 0, Math.PI * 2); ctx.fill();
-  ctx.fillStyle = '#050505';
-  ctx.beginPath(); ctx.ellipse(cx, y, 36, 8, 0, 0, Math.PI * 2); ctx.fill();
-  if (game.cannonAmmo > 0 && weapon.state !== 'firing') {
-    ctx.fillStyle = '#d0281f';
-    ctx.beginPath(); ctx.ellipse(cx, y + 1, 20, 5, 0, 0, Math.PI * 2); ctx.fill();
-  }
+  wctx.clearRect(0, 0, WBUF_W, WBUF_H);
+  wctx.drawImage(KEYBOARD_BASE, 0, 0);
+  const since = now - weapon.fireAt;
+  drawKeys(wctx, since < 320 ? since / 260 : -1);
+  // RGB underglow leaking around the case: along the far edge and down both sides, hue cycling
+  const glow = (x, y, i) => { wctx.fillStyle = `hsl(${(i * 7 + now * 0.08) % 360},90%,55%)`; wctx.fillRect(x, y, 1, 1); };
+  for (let x = Math.round(kbL(6)) + 1, i = 0; x < Math.round(kbR(6)) - 1; x++, i++) glow(x, 7, i);
+  for (let y = 8; y < 36; y++) { glow(Math.round(kbL(y)) + 1, y, y); glow(Math.round(kbR(y)) - 2, y, 60 - y); }
+  wctx.drawImage(KEYBOARD_HANDS, 0, 0);
+  blitWeapon(KB_W, KB_H, left, top);
 }
 
 // Keycaps thrown by a keyboard blast: fly from the keyboard toward the crosshair, spinning and shrinking

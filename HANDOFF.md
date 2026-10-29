@@ -264,6 +264,28 @@ The user supplied title art: `art/title.webp` (1448×1086), with the character i
 
 ---
 
+### Weapon art: Doom-style pixel art ✅
+Both first-person weapons were redrawn (`// --- First-person weapons: chunky pixel art`, just above `drawKeycaps`). Gameplay is unchanged.
+- **Pipeline:** each weapon is drawn at 1/`WPX` (4) resolution and scaled up with nearest-neighbor for Doom-style chunky pixels.
+  - **Built once at load:** the bodies, plus gloved hands, white shirt cuffs and dark suit sleeves matching the title art's character. `shadeTube()` writes a cylinder lit from the upper left straight into pixels, and `outlineTex()` adds a 1 px dark outline.
+  - **Each frame:** moving parts go into the scratch canvas `wbuf` (`WBUF_W`×`WBUF_H`). `blitWeapon()` tints it by room (`AREA_TINT` by `FLOOR_MAP`, eased: office none, Server Room blue, arena purple, IT closet warm), adds a red wash while `game.hurt`, then scales it ×4 onto the screen.
+  - The smooth radial muzzle bloom is still drawn at screen resolution behind each weapon.
+- **Closing Cannon** (`CANNON_SPRITE`, 104×64, plus 28 rows above for the flash; muzzle at screen y `CANNON_MUZZLE_Y` 300):
+  - a gunmetal-olive tube widening toward you (`cannonHW`), with two bolted rings and rivets, scratches, a rear sight block and front post, and a muzzle rim with a dark bore
+  - the next rocket's red nose sits in the bore while loaded
+  - right glove wrapped over the right side; left glove underneath with its thumb on top
+  - the red band carries **"CLOSE" / "W/O EMAIL"** in two lines, drawn at full resolution after the blit (outlined) so it stays readable
+  - firing: a pixel starburst flash (`CANNON_FLASH`, 2 variants), the existing kick, then 3 smoke puffs curling up for ~0.9 s
+- **Keyboard** (`KEYBOARD_BASE` + `KEYBOARD_HANDS`, 96×40):
+  - a tapered mechanical-keyboard case with a cable out the back
+  - `drawKeys()` draws 3D caps each frame (top face + darker front edge, legend dots), with an orange Esc and an ENTECH-blue Enter
+  - firing: keys press down in a wave spreading out from the middle
+  - RGB underglow cycles along the far edge and both sides
+  - gloved hands grip both ends (finger segments, lit thumbs) with cuffs and sleeves
+- **Cost:** under 0.5 ms per frame for either weapon (full frame ≈ 6.3 ms in testing).
+
+---
+
 ## Remaining chunks
 None planned. Ideas: environment props as sprites (desks, plants, water cooler), music, sharing the game (itch.io private draft → public).
 
