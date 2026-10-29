@@ -143,6 +143,7 @@ Title: **ENTECH: The Closer** (renamed from "DNS: The Reckoning"; the repo folde
 ---
 
 ## Running / testing
+- **Live:** https://johnentech.github.io/entech-the-closer/ (GitHub Pages, deployed from `main` / root of https://github.com/johnentech/entech-the-closer). Every push to `main` redeploys within a minute or two, including new voice files in `sounds/voice/`.
 - `node serve.js` → http://localhost:5180 (zero-dependency static server), or just open `index.html` directly.
 - In the Claude desktop browser pane, `requestAnimationFrame` runs sporadically; for automated checks, stub it out (`window.requestAnimationFrame = () => 0`) and step the game by calling `update(); render();` from JS.
 - If the session was started in the Solitaire folder, `preview_start` reads Solitaire's launch config — run `node serve.js` in the background instead of touching Solitaire files.
