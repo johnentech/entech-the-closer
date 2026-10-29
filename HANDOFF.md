@@ -271,14 +271,14 @@ Both first-person weapons were redrawn (`// --- First-person weapons: chunky pix
   - **Built once at load:** the bodies, plus gloved hands, white shirt cuffs and dark suit sleeves matching the title art's character. `shadeTube()` writes a cylinder lit from the upper left straight into pixels, and `outlineTex()` adds a 1 px dark outline.
   - **Each frame:** moving parts go into the scratch canvas `wbuf` (`WBUF_W`×`WBUF_H`). `blitWeapon()` tints it by room (`AREA_TINT` by `FLOOR_MAP`, eased: office none, Server Room blue, arena purple, IT closet warm), adds a red wash while `game.hurt`, then scales it ×4 onto the screen.
   - The smooth radial muzzle bloom is still drawn at screen resolution behind each weapon.
-- **Closing Cannon** (`CANNON_SPRITE`, 104×64, plus 28 rows above for the flash; muzzle at screen y `CANNON_MUZZLE_Y` 300):
-  - **points forward like Doom's launcher** (redrawn after play-test; the first version read as aiming at the ceiling): seen from behind and above, with a round muzzle at the far end (`CANNON_MY`), the tube flaring toward you in perspective (`cannonHW`), and the rings and red band arching (∩) over the top. Each pixel's position "along" the tube is `y + CANNON_ARCH·hw·n`; `CANNON_RINGS` / `CANNON_BAND` are ranges of that, and `cannonPeak(a)` gives the row where an arch peaks.
-  - gunmetal-olive with bolted rings and rivets that follow the arch, scratches, a front sight post behind the muzzle and a rear sight block nearer you
-  - the loaded round shows as a red disc down the bore
-  - right glove wrapped over the right side; left glove underneath with its thumb on top
-  - the red band carries **"CLOSE" / "W/O EMAIL"** in two lines, drawn at full resolution after the blit (outlined) so it stays readable, with each letter set on the band's arch
+- **Closing Cannon** (`CANNON_SPRITE`, 72×44, plus `CANNON_TOP` 24 rows above for the flash; dome tip at screen y `CANNON_TIP_Y` 322). It went through two play-test rounds: the first version read as aiming at the ceiling, and the forward-facing redo with a red bore was too big. The user then asked for something closer to a reference image of Doom's rocket launcher, so this is an **original drawing in that style**:
+  - seen from behind: glossy dark gunmetal with a bright streak down the center, a rounded dome at the far end (`CANNON_DOME`) with a grey sight knob, and no visible bore
+  - three arched ribs (`CANNON_RIBS`, each with a lit edge), then the red label band (`CANNON_BAND`), then two arched vent slots with lit lips (`CANNON_VENTS`)
+  - features arch (∩) like rings around a tube seen from above: each pixel's position "along" the body is `y + CANNON_ARCH·hw·n`, the ranges above are in that unit, and `cannonPeak(a)` gives the row where an arch peaks
+  - side flanges, a small upper pair and a bigger lower pair; the gloved hands grip the lower pair, with shirt cuffs and suit sleeves trailing off the bottom corners
+  - the band carries **"CLOSE" / "W/O EMAIL"** in two lines (bold 13 px), drawn at full resolution after the blit (outlined) so it stays readable, with each letter set on the band's arch
   - `weapon.fireAt` starts at -1e9, so no flash, smoke or key ripple shows right after load
-  - firing: a pixel starburst flash (`CANNON_FLASH`, 2 variants), the existing kick, then 3 smoke puffs curling up for ~0.9 s
+  - firing: a pixel starburst flash off the dome tip (`CANNON_FLASH`, 2 variants), the existing kick, then 3 smoke puffs curling up for ~0.9 s
 - **Keyboard** (`KEYBOARD_BASE` + `KEYBOARD_HANDS`, 96×40):
   - a tapered mechanical-keyboard case with a cable out the back
   - `drawKeys()` draws 3D caps each frame (top face + darker front edge, legend dots), with an orange Esc and an ENTECH-blue Enter

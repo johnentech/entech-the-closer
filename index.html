@@ -2954,62 +2954,63 @@ function blitWeapon(w, h, x, y) {
 }
 const idleBob = () => weapon.state === 'idle' ? Math.sin(performance.now() * 0.003) * 2 : 0;
 
-// --- Closing Cannon (sprite 104×64; the scratch canvas adds 28 rows above it for the muzzle flash) ---
-// Seen from behind and above, pointing forward like Doom's launcher: a round muzzle at the far end, the tube flaring
-// out toward you, and rings/band that arch (∩) the way rings around a tube look from above. "Along" the tube is
-// y + CANNON_ARCH·hw·n, so the middle of each ring sits higher than its sides.
-const CANNON_W = 104, CANNON_H = 64, CANNON_CX = 52, CANNON_TOP = 28;
-const CANNON_MY = 14, CANNON_ARCH = 0.45;                 // muzzle center row; ring/band arch strength
-const cannonHW = y => 10 + 20 * Math.max(0, (y - CANNON_MY) / (CANNON_H - CANNON_MY)) ** 1.3; // perspective flare
-const CANNON_RINGS = [[17, 20], [47, 50]], CANNON_BAND = [27, 41]; // "along" ranges
-// Row where the top-center of the tube reaches a given "along" value (the arch's peak)
+// --- Closing Cannon (sprite 72×44; the scratch canvas adds CANNON_TOP rows above it for the muzzle flash) ---
+// An original launcher in the style of Doom's: seen from behind, glossy dark gunmetal with a rounded dome at the far
+// end and a grey sight knob, three arched ribs, the red "CLOSE W/O EMAIL" band, two arched vent slots, and side
+// flanges, the lower pair gripped by the gloved hands. Features arch (∩) like rings around a tube seen from above:
+// a pixel's position "along" the body is y + CANNON_ARCH·hw·n, and the bands below are ranges of that.
+const CANNON_W = 72, CANNON_H = 44, CANNON_CX = 36, CANNON_TOP = 24;
+const CANNON_DOME = [2, 9], CANNON_ARCH = 0.35;   // dome from row 2 (tip) to row 9; arch strength
+const cannonHW = y => y < CANNON_DOME[1]
+  ? 18 * Math.sqrt(Math.max(0, 1 - ((CANNON_DOME[1] - y) / (CANNON_DOME[1] - CANNON_DOME[0])) ** 2))
+  : 18 + 8 * (y - CANNON_DOME[1]) / (CANNON_H - CANNON_DOME[1]);
+const CANNON_RIBS  = [[11, 12], [13.5, 14.5], [16, 17]];   // dark grooves (a lit edge follows each)
+const CANNON_BAND  = [19.5, 28.5];                          // red label band
+const CANNON_VENTS = [[31, 32.5], [35.5, 37]];              // dark slots (|u| < 0.38)
+// Row where the top-center of the body reaches a given "along" value (the arch's peak)
 const cannonPeak = a => { let y = a; for (let i = 0; i < 4; i++) y = a - CANNON_ARCH * cannonHW(y); return y; };
 const CANNON_SPRITE = (() => {
   const c = makeTex(CANNON_W, CANNON_H, () => {}), g = c.getContext('2d'), img = g.createImageData(CANNON_W, CANNON_H), r = rng(21);
   const R = (col, x, y, w, h) => { g.fillStyle = col; g.fillRect(x, y, w, h); };
-  for (let y = CANNON_MY; y < CANNON_H; y++) {
+  const inR = (a, ranges) => ranges.some(([p, q]) => a >= p && a < q);
+  for (let y = CANNON_DOME[0]; y < CANNON_H; y++) {
     const hw = cannonHW(y);
+    if (hw < 0.5) continue;
     for (let x = Math.max(0, Math.ceil(CANNON_CX - hw)); x <= Math.min(CANNON_W - 1, Math.floor(CANNON_CX + hw)); x++) {
       const u = (x + 0.5 - CANNON_CX) / hw, n = Math.sqrt(Math.max(0, 1 - u * u)), along = y + CANNON_ARCH * hw * n;
-      const ring = CANNON_RINGS.some(([a, b]) => along >= a && along < b);
-      const base = ring ? [66, 68, 60] : along >= CANNON_BAND[0] && along < CANNON_BAND[1] ? [176, 32, 28] : [96, 100, 86];
-      // Lit from above: brightest along the top-center ridge, a specular streak just left of it
-      const k = 0.3 + 0.62 * n * (0.8 - 0.3 * u) + 0.5 * Math.exp(-(((u + 0.3) / 0.12) ** 2)) + (r() - 0.5) * 0.06;
+      // Glossy dark metal: a broad sheen plus a bright streak down the center
+      let k = 0.22 + 0.5 * n + 0.65 * Math.exp(-(((u + 0.05) / 0.16) ** 2)) + (r() - 0.5) * 0.05;
+      if (y < CANNON_DOME[1]) k *= 0.75 + 0.25 * (y - CANNON_DOME[0]) / (CANNON_DOME[1] - CANNON_DOME[0]); // dome darkens toward its tip
+      let base = [74, 76, 82];
+      if (inR(along, [CANNON_BAND])) base = [176, 32, 28];
+      else if (inR(along, CANNON_RIBS)) k *= 0.35;
+      else if (inR(along, CANNON_RIBS.map(([, q]) => [q, q + 0.8]))) k *= 1.35;
+      else if (Math.abs(u) < 0.38 && inR(along, CANNON_VENTS)) { base = [12, 12, 14]; k = 1; }
+      else if (Math.abs(u) < 0.42 && inR(along, CANNON_VENTS.map(([, q]) => [q, q + 0.7]))) k *= 1.5; // lit lip under each vent
       const i = (y * CANNON_W + x) * 4;
       img.data[i] = Math.min(255, base[0] * k); img.data[i + 1] = Math.min(255, base[1] * k); img.data[i + 2] = Math.min(255, base[2] * k); img.data[i + 3] = 255;
     }
   }
   g.putImageData(img, 0, 0);
-  // Rivets around each ring, following its arch
-  for (const [a, b] of CANNON_RINGS) for (const u of [-0.8, -0.45, 0, 0.45, 0.8]) {
-    const y = Math.round(cannonPeak((a + b) / 2) + CANNON_ARCH * cannonHW(cannonPeak((a + b) / 2)) * (1 - Math.sqrt(1 - u * u)));
-    R('#b4b6aa', Math.round(CANNON_CX + u * cannonHW(y)), y, 1, 1);
+  // Grey sight knob on the dome's tip
+  R('#2a2b2e', CANNON_CX - 4, 1, 8, 6); R('#8a8c90', CANNON_CX - 3, 2, 6, 4); R('#c4c6ca', CANNON_CX - 2, 2, 4, 1);
+  // Side flanges: a small upper pair and a bigger lower pair (the grips)
+  for (const [y0, y1, w] of [[12, 19, 4], [25, 37, 6]]) {
+    for (let y = y0; y < y1; y++) {
+      const hw = Math.round(cannonHW(y)), shade = y === y0 ? '#6e7076' : y === y1 - 1 ? '#202125' : '#3c3e43';
+      R(shade, CANNON_CX - hw - w, y, w + 1, 1);
+      R(shade, CANNON_CX + hw, y, w + 1, 1);
+    }
   }
-  for (let i = 0; i < 16; i++) {                                                     // scratches (not on the band)
-    const yy = 22 + (r() * 36 | 0), uu = r() * 1.6 - 0.8;
-    const along = yy + CANNON_ARCH * cannonHW(yy) * Math.sqrt(1 - uu * uu);
-    if (along < CANNON_BAND[0] - 1 || along > CANNON_BAND[1]) R('rgba(225,230,215,0.35)', Math.round(CANNON_CX + uu * cannonHW(yy)), yy, 1 + (r() * 2 | 0), 1);
+  // Gloved hands wrapped around the lower flanges; shirt cuffs and suit sleeves trail off the bottom corners
+  for (const flip of [false, true]) {
+    const H = (col, x, y, w, h) => R(col, flip ? CANNON_W - x - w : x, y, w, h);
+    const ex = Math.round(CANNON_CX - cannonHW(31));
+    H(GLOVE, ex - 9, 27, 8, 10);
+    for (const fy of [28, 31, 34]) { H(GLOVE_HI, ex - 9, fy, 7, 1); H('#0e0e10', ex - 9, fy + 2, 7, 1); }
+    H(CUFF, ex - 10, 37, 9, 2);
+    for (let y = 39; y < CANNON_H; y++) H(SLEEVE, ex - 11 - (y - 39), y, 11, 1);
   }
-  // Sights on the top ridge: a front post just behind the muzzle, a rear block nearer to you
-  R('#232527', CANNON_CX - 1, CANNON_MY + 9, 3, 3);
-  const ry = Math.round(cannonPeak(53));
-  R('#232527', CANNON_CX - 5, ry, 11, 6); R('#55595e', CANNON_CX - 5, ry, 11, 1); R('#0c0d0e', CANNON_CX - 1, ry, 3, 3);
-  // Muzzle: a round opening facing away from you — rim, inner lip highlight, dark bore
-  g.fillStyle = '#6c7064'; g.beginPath(); g.ellipse(CANNON_CX, CANNON_MY, 12, 10.5, 0, 0, Math.PI * 2); g.fill();
-  g.fillStyle = '#9da190'; g.beginPath(); g.ellipse(CANNON_CX, CANNON_MY, 12, 10.5, 0, Math.PI * 1.05, Math.PI * 1.75); g.lineTo(CANNON_CX, CANNON_MY); g.fill();
-  g.fillStyle = '#6c7064'; g.beginPath(); g.ellipse(CANNON_CX, CANNON_MY, 10.5, 9, 0, 0, Math.PI * 2); g.fill();
-  g.fillStyle = '#0a0a0b'; g.beginPath(); g.ellipse(CANNON_CX, CANNON_MY, 8.5, 7.2, 0, 0, Math.PI * 2); g.fill();
-  // Right hand on the front grip: fingers wrap over the tube's right edge; shirt cuff and suit sleeve below
-  const er = y => Math.round(CANNON_CX + cannonHW(y));
-  R(GLOVE, er(42) - 1, 36, 8, 15);
-  for (const fy of [37, 40, 43, 46]) { R(GLOVE, er(fy) - 6, fy, 7, 2); R(GLOVE_HI, er(fy) - 6, fy, 5, 1); }
-  R(CUFF, er(51) - 1, 51, 10, 2);
-  for (let y = 53; y < CANNON_H; y++) { R(SLEEVE, er(y) - 1, y, 12 + (y - 53), 1); R(SLEEVE_HI, er(y) - 1, y, 2, 1); }
-  // Left hand underneath on the left, thumb over the top; cuff and sleeve
-  const el = y => Math.round(CANNON_CX - cannonHW(y));
-  R(GLOVE, el(47) - 7, 45, 10, 8); R(GLOVE, el(45) + 1, 45, 5, 2); R(GLOVE_HI, el(45) + 1, 45, 4, 1); R(GLOVE_HI, el(47) - 6, 46, 7, 1);
-  R(CUFF, el(53) - 8, 53, 10, 2);
-  for (let y = 55; y < CANNON_H; y++) R(SLEEVE, el(y) - 10 - (y - 55), y, 12 + (y - 55), 1);
   return outlineTex(c);
 })();
 // Two muzzle-flash variants (alternate shots), a jagged star in orange → yellow → white
@@ -3026,56 +3027,51 @@ const CANNON_FLASH = [0, 1].map(v => makeTex(44, 36, g => {
   };
   star(20, '#ff6a10'); star(14, '#ffc030'); star(8, '#fff6c0');
 }));
-const CANNON_MUZZLE_Y = 300; // screen y of the muzzle at rest
+const CANNON_TIP_Y = 322; // screen y of the dome's tip at rest
 
 function drawCannon() {
-  const now = performance.now(), cx = SCREEN_W / 2, my = CANNON_TOP + CANNON_MY;
-  const top = CANNON_MUZZLE_Y - my * WPX + weapon.kickY + idleBob(), left = cx - CANNON_W * WPX / 2;
-  const muzzleY = top + my * WPX;
+  const now = performance.now(), cx = SCREEN_W / 2, tip = CANNON_TOP + CANNON_DOME[0];
+  const top = CANNON_TIP_Y - tip * WPX + weapon.kickY + idleBob(), left = cx - CANNON_W * WPX / 2;
+  const tipY = top + tip * WPX;
 
   if (weapon.flash > 0) { // smooth light bloom behind the pixel flash
-    const grad = ctx.createRadialGradient(cx, muzzleY, 0, cx, muzzleY, 170);
+    const grad = ctx.createRadialGradient(cx, tipY, 0, cx, tipY, 150);
     grad.addColorStop(0, `rgba(255,150,50,${weapon.flash * 0.75})`);
     grad.addColorStop(1, 'rgba(255,80,0,0)');
     ctx.fillStyle = grad;
     ctx.beginPath();
-    ctx.ellipse(cx, muzzleY, 170, 110, 0, 0, Math.PI * 2);
+    ctx.ellipse(cx, tipY, 150, 95, 0, 0, Math.PI * 2);
     ctx.fill();
   }
 
   wctx.clearRect(0, 0, WBUF_W, WBUF_H);
   wctx.drawImage(CANNON_SPRITE, 0, CANNON_TOP);
-  if (game.cannonAmmo > 0 && weapon.state !== 'firing') {              // the loaded round, seen down the bore
-    wctx.fillStyle = '#8a1a14'; wctx.beginPath(); wctx.arc(CANNON_CX, my, 4.5, 0, Math.PI * 2); wctx.fill();
-    wctx.fillStyle = '#c8302a'; wctx.beginPath(); wctx.arc(CANNON_CX - 0.5, my - 0.5, 3, 0, Math.PI * 2); wctx.fill();
-    wctx.fillStyle = '#ff7a60'; wctx.fillRect(CANNON_CX - 2, my - 2, 1, 1);
-  }
-  const since = now - weapon.fireAt;                                    // smoke curling out after a shot
+  const since = now - weapon.fireAt;                                    // smoke curling up off the tip after a shot
   for (let i = 0; i < 3; i++) {
     const tp = (since - 60 - i * 110) / 900;
     if (tp <= 0 || tp >= 1) continue;
     wctx.fillStyle = `rgba(150,150,150,${0.55 * (1 - tp)})`;
     wctx.beginPath();
-    wctx.arc(CANNON_CX + Math.sin(i * 2.1 + tp * 4) * 4, my - 6 - tp * 22, 3 + tp * 6, 0, Math.PI * 2);
+    wctx.arc(CANNON_CX + Math.sin(i * 2.1 + tp * 4) * 3, tip - 3 - tp * 18, 2.5 + tp * 5, 0, Math.PI * 2);
     wctx.fill();
   }
   if (weapon.flash > 0) {
     wctx.globalAlpha = weapon.flash;
-    wctx.drawImage(CANNON_FLASH[(weapon.fireAt / 7 | 0) % 2], CANNON_CX - 22, my - 18);
+    wctx.drawImage(CANNON_FLASH[(weapon.fireAt / 7 | 0) % 2], CANNON_CX - 22, tip - 20);
     wctx.globalAlpha = 1;
   }
   blitWeapon(CANNON_W, CANNON_TOP + CANNON_H, left, top);
 
   // Band label at full resolution so it stays readable, each letter set on the band's arch
-  ctx.font = 'bold 16px monospace';
+  ctx.font = 'bold 13px monospace';
   ctx.textAlign = 'center';
   ctx.textBaseline = 'middle';
   ctx.lineJoin = 'round';
-  ctx.lineWidth = 4;
+  ctx.lineWidth = 3;
   ctx.strokeStyle = '#3a0806';
   ctx.fillStyle = '#fff2dc';
   const [b0, b1] = CANNON_BAND;
-  for (const [text, along] of [['CLOSE', b0 + (b1 - b0) * 0.3], ['W/O EMAIL', b0 + (b1 - b0) * 0.75]]) {
+  for (const [text, along] of [['CLOSE', b0 + (b1 - b0) * 0.3], ['W/O EMAIL', b0 + (b1 - b0) * 0.74]]) {
     const py = cannonPeak(along), hw = cannonHW(py) * WPX, w = ctx.measureText(text).width;
     let x = cx - w / 2;
     for (const ch of text) {
