@@ -230,26 +230,28 @@ It returns 8 flutter frames (front → squashed → edge-on → back with faint 
 
 ### Title screen art + music ✅
 The user supplied title art: `art/title.webp` (1448×1086), with the character in a suit and a Doom-style "THE CLOSER" logo. It replaces the old text title (the controls list and terminal teaser are gone; the controls stay in the HTML line under the canvas).
-- **Stages** (`title.stage`):
-  - `gate`: a black "CLICK OR PRESS ANY KEY" screen. Browsers only allow sound after a gesture, so the title music can't autoplay.
-  - `intro`: the logo drops in (`LOGO_DROP_MS` 420) over the dimmed scene and slams down with shake, flash, `slam` + `explosion` SFX and the riff's first chord. The scene brightens and "E N T E C H :" fades in above the logo. A key press during the intro skips to `ready`.
-  - `ready` (after `INTRO_READY_MS`): "CLICK OR PRESS ANY KEY TO START" blinks in the bottom 30 px band; a click also grabs the mouse.
+- **Stages** (`title.stage`), reworked after play-testing (the old black "press any key" gate made you wait in the dark for the art):
+  - `loading`: black until the art *and* its effects are prepared (`titleArt.ready` is set only after `prepTitleFx()`).
+  - `art`: the art fades in (`ART_FADE_MS`) with all its animations. "PRESS ANY KEY" appears at `PROMPT_DELAY_MS` (~1.5 s after it's fully visible); keys do nothing before that. That press is also the gesture that lets the browser start sound.
+  - `intro`: the logo punches in from 1.7× and slams into place (`SLAM_MS` 260) with shake, flash, `slam` + `explosion` SFX and the riff's first chord; "E N T E C H :" fades in above it. Keys are ignored.
+  - `ready` (at `INTRO_READY_MS`, ~2 s after the slam): "CLICK OR PRESS ANY KEY TO START" blinks in the bottom band; a click also grabs the mouse.
   - `advanceTitle()` handles every key/click; `updateTitle()` runs the timeline. R-restart still skips the title (`startGame(true)`).
 - **Layout:** the art fills the top 470 px (`ART_SCALE`, centered at `ART_X`); a blurred, darkened copy fills the side bars (`titleArt.sides`). The whole art slowly pushes in 4% and back over 40 s, around `ART_ANCHOR`. `render()` returns right after `drawTitle()` while on the title (no raycasting).
 - **Effects** (`drawTitleFx`, in art pixels): `prepTitleFx()` cuts color-masked layers from the art at load, using feature boxes found from its colors (`ART_LIGHTS`, `ART_STRIPE`, `ART_MONITORS`, `ART_RACKS`, `ART_LOGO`):
-  - the logo (saturation/navy mask, closed with a radius-2 dilate+erode), plus a copy of the art with the logo removed for the drop
+  - the logo (saturation/navy mask, closed with a radius-2 dilate+erode), used for the punch-in and the glint
   - ceiling lights that hum; light `ART_DYING` stutters off every ~5 s (`lightsOff` dark copies)
   - the red back-wall stripe pulsing via a red-tinted copy (`stripeGlow`)
   - flickering monitor screens
   - 44 rack-LED clusters that randomly go dark or flare
   - a glint band sweeping through the logo's own pixels every `GLINT_EVERY_MS`
-  - **file:// fallback:** reading pixels from a file:// image is blocked (tainted canvas), so effects are skipped and the art just punches in.
+  - **file:// fallback:** reading pixels from a file:// image is blocked (tainted canvas), so effects are skipped and the whole art punches in instead of just the logo.
 - **Music** (`// --- Music` in the audio section): synthesized, no files. `TRACKS` hold 16th-note bars of guitar tokens (`x` = palm-muted low-E chug, `G2` etc. = power chord, `-` = hold) plus kick/snare/hat/crash lines.
   - `title`: an original Doom-style riff at 168 BPM (Doom's actual music is copyrighted). It opens with four slammed E chords (`intro: 2` bars play once), then loops a 4-bar gallop riff.
   - `game`: a darker 8-bar loop at 112 BPM, low-passed and quiet.
+  - `boss`: a faster, denser 8-bar loop at 150 BPM (tremolo 16th chugs, double kick, chromatic stabs). It plays while the DNS is alive and cuts to silence when it dies, so SERVFAIL's explosions play alone. `MUSIC_VOL.boss` is 0.12 because that offline-renders at the same RMS loudness as `game` at 0.2.
   - Instruments: `guitar()` is detuned saws → waveshaper distortion → lowpass; `bassNote()`; drums reuse `tone()` / `noise()`.
-  - `scheduleMusic()` is a 0.25 s look-ahead scheduler on a 40 ms timer. `syncMusic()` (called from `update()`) picks the track: title / game / silence on death and victory.
-  - The bus is ducked under voice lines (`music.duck`) and muted by **N**. Volumes are in `MUSIC_VOL` (title 0.5, game 0.2).
+  - `scheduleMusic()` is a 0.25 s look-ahead scheduler on a 40 ms timer. `syncMusic()` (called from `update()`) picks the track: title / game / boss / silence on death, victory and SERVFAIL.
+  - The bus is ducked under voice lines (`music.duck`) and muted by **N**. Volumes are in `MUSIC_VOL` (title 0.5, game 0.2, boss 0.12).
   - Offline-render check: title peak 0.67 (no clipping); the gameplay loop is ~20 dB under the shotgun SFX. **Not heard by me**, so the mix needs a real listen.
 - `serve.js` serves `.webp` as `image/webp`.
 

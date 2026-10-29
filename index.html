@@ -522,8 +522,25 @@ const TRACKS = {
     hat:   Array(8).fill('x.x.x.x.x.x.x.x.'),
     crash: ['x...............', '................', '................', '................', 'x...............', '................', '................', '................'],
   },
+  boss: {
+    bpm: 150, intro: 0, tone: 1500, // faster and denser than `game`: tremolo chugs, double kick, chromatic stabs
+    gtr: [
+      'x x x x x x x x G2 - x x F#2 - x x',
+      'x x x x x x x x Bb2 - x x A2 - x x',
+      'x . x x x . x x x . x x C3 - B2 -',
+      'x . x x x . x x Bb2 - - - A2 - G2 -',
+      'x x x x x x x x G2 - x x F#2 - x x',
+      'x x x x x x x x D3 - x x C3 - x x',
+      'E3 - - - D3 - - - C3 - - - Bb2 - - -',
+      'x x x x x x x x B2 - - - - - - -',
+    ].map(bar),
+    kick:  ['xxxxxxxxx.xxx.xx', 'xxxxxxxxx.xxx.xx', 'x.xxx.xxx.xxx.x.', 'x.xxx.xxx.......', 'xxxxxxxxx.xxx.xx', 'xxxxxxxxx.xxx.xx', 'x...x...x...x...', 'xxxxxxxxx.......'],
+    snare: ['....x.......x...', '....x.......x...', '....x.......x...', '....x.......x...', '....x.......x...', '....x.......x...', '....x.......x...', '....x.......xxxx'],
+    hat:   Array(8).fill('x.x.x.x.x.x.x.x.'),
+    crash: ['x...............', '................', 'x...............', '................', 'x...............', '................', 'x...x...x...x...', '................'],
+  },
 };
-const MUSIC_VOL = { title: 0.5, game: 0.2 };
+const MUSIC_VOL = { title: 0.5, game: 0.2, boss: 0.12 }; // boss is denser, so 0.12 renders at the same loudness (RMS) as game at 0.2
 const music = { bus: null, duck: null, curve: null, name: null, track: null, step: 0, nextAt: 0, timer: 0 };
 
 // Switch tracks (null fades out). lead = seconds until the first note (the title's first chord lands with the logo).
@@ -629,7 +646,11 @@ function bassNote(t, f, dur, muted) {
 // Which track should be playing right now
 function syncMusic() {
   if (!audio.ctx || audio.ctx.state !== 'running') return;
-  const want = !game.started ? (title.stage === 'gate' ? null : 'title') : (game.over || game.won) ? null : 'game';
+  const boss = game.boss;
+  const want = !game.started ? (title.stage === 'intro' || title.stage === 'ready' ? 'title' : null)
+             : game.over || game.won ? null
+             : boss ? (boss.state === 'dead' ? null : 'boss') // the DNS's fight; silence for SERVFAIL
+             : 'game';
   if (want !== music.name) playMusic(want);
 }
 
@@ -1691,13 +1712,17 @@ function onEmpty(dryFire) {
 }
 
 // --- Title screen ---
-// Stages: 'gate' (black "press any key", needed because browsers only allow sound after a key/click)
-//      → 'intro' (THE CLOSER drops in and slams down on the first chord of the title riff)
-//      → 'ready' ("press any key to start", logo glints every few seconds) → game.
-const title = { stage: 'gate', at: 0, landed: false, shake: 0 };
-const LOGO_DROP_MS   = 420;  // logo fall time; the riff's first chord is scheduled to land with it
-const INTRO_READY_MS = 1500; // after the key press, when "press any key to start" appears
-const GLINT_EVERY_MS = 4000, GLINT_MS = 700;
+// Stages: 'loading' (black until the art and its effects are prepared)
+//      → 'art'   (the art fades in with its animations; after PROMPT_DELAY_MS "PRESS ANY KEY" appears — keys do
+//                 nothing before that. This first press is also what lets the browser start sound.)
+//      → 'intro' (THE CLOSER punches in and slams on the first chord of the title riff, ENTECH fades in)
+//      → 'ready' (after INTRO_READY_MS: "press any key to start"; logo glints every few seconds) → game.
+const title = { stage: 'loading', at: 0, landed: false, shake: 0 };
+const ART_FADE_MS     = 700;   // art fade-in once loaded
+const PROMPT_DELAY_MS = 2200;  // from the art starting to fade in until "PRESS ANY KEY" (≈1.5 s fully visible)
+const SLAM_MS         = 260;   // logo punch-in time; the riff's first chord is scheduled to land with it
+const INTRO_READY_MS  = 2300;  // from the key press until "press any key to start" (≈2 s after the slam)
+const GLINT_EVERY_MS  = 4000, GLINT_MS = 700;
 
 // The art (1448×1086) fills the top 470 px, centered; blurred copies of it fill the side bars.
 // The bottom 30 px band holds the prompt. Feature boxes below are in art pixels, found from the image's colors.
@@ -1709,18 +1734,18 @@ const ART_STRIPE    = [374, 290, 600, 32];                 // red stripe on the 
 const ART_MONITORS  = [[160, 392, 112, 124], [0, 320, 64, 160]];
 const ART_RACKS     = [940, 40, 508, 600];                 // server racks (LEDs are found inside)
 const ART_LOGO      = [100, 690, 1262, 372];               // "THE CLOSER"
-const titleArt = { img: new Image(), ready: false, fx: false, sides: null, bg: null, logo: null, logoSmall: null,
+const titleArt = { img: new Image(), ready: false, fx: false, sides: null, logo: null, logoSmall: null,
                    glint: null, stripe: null, stripeGlow: null, lights: [], lightsOff: [], screens: [], leds: [] };
 
 titleArt.img.onload = () => {
-  titleArt.ready = true;
   titleArt.sides = makeTex(SCREEN_W, SCREEN_H, g => {
     g.filter = 'blur(14px) brightness(0.35)';
     g.drawImage(titleArt.img, -40, -20, SCREEN_W + 80, 470 + 40);
   });
   // Masks need the image's pixels; opened as file:// the canvas is "tainted" and this throws.
-  // Then the art still shows, just without the masked effects (the logo punches in instead of dropping).
+  // Then the art still shows, just without the masked effects (the whole art punches in instead of just the logo).
   try { prepTitleFx(); titleArt.fx = true; } catch (e) {}
+  titleArt.ready = true; // only now, so the art never shows half-prepared
 };
 titleArt.img.src = 'art/title.webp';
 
@@ -1761,17 +1786,6 @@ function prepTitleFx() {
   // Glint source: the logo at screen resolution
   titleArt.logoSmall = makeTex(Math.ceil(lw * ART_SCALE), Math.ceil(lh * ART_SCALE), g => g.drawImage(titleArt.logo.c, 0, 0, Math.ceil(lw * ART_SCALE), Math.ceil(lh * ART_SCALE)));
   titleArt.glint = makeTex(titleArt.logoSmall.width, titleArt.logoSmall.height, () => {});
-  // The art with the logo cut out (shown, dimmed, while the logo falls into place)
-  titleArt.bg = makeTex(ART_W, ART_H, g => {
-    const img = g.createImageData(ART_W, ART_H);
-    img.data.set(D);
-    for (let y = 0; y < lh; y++) for (let x = 0; x < lw; x++) {
-      if (!mask[y * lw + x]) continue;
-      const i = ((ly + y) * ART_W + lx + x) * 4;
-      img.data[i] = 28; img.data[i + 1] = 25; img.data[i + 2] = 22; // dark floor
-    }
-    g.putImageData(img, 0, 0);
-  });
 
   titleArt.stripe  = cut(ART_STRIPE, (R, G, B) => R > 35 && R > G * 2.5 && R > B * 3);
   titleArt.lights  = ART_LIGHTS.map(box => cut(box, (R, G, B) => 0.3 * R + 0.59 * G + 0.11 * B > 120));
@@ -1808,26 +1822,23 @@ function prepTitleFx() {
   }
 }
 
-// Any key / click while the title is up
+// Any key / click while the title is up (ignored until the current prompt is showing)
 function advanceTitle() {
   const now = performance.now();
-  if (title.stage === 'gate') {
+  if (title.stage === 'art' && now - title.at >= PROMPT_DELAY_MS) {
     title.stage = 'intro';
     title.at = now;
     ensureAudio();
-    playMusic('title', LOGO_DROP_MS / 1000);
-  } else if (title.stage === 'intro') {
-    title.at = now - INTRO_READY_MS; // impatient: skip to "press any key to start"
-    title.landed = true;
-    title.stage = 'ready';
-  } else {
+    playMusic('title', SLAM_MS / 1000);
+  } else if (title.stage === 'ready') {
     startGame();
   }
 }
 
 function updateTitle(now) {
   title.shake = title.shake < 0.3 ? 0 : title.shake * 0.85;
-  if (title.stage === 'intro' && !title.landed && now - title.at >= LOGO_DROP_MS) {
+  if (title.stage === 'loading' && titleArt.ready) { title.stage = 'art'; title.at = now; }
+  if (title.stage === 'intro' && !title.landed && now - title.at >= SLAM_MS) {
     title.landed = true;
     title.shake = 16;
     sfx('slam');
@@ -2509,27 +2520,20 @@ function drawTitle() {
   ctx.textAlign = 'center';
   ctx.textBaseline = 'middle';
 
-  // Gate: a black screen asking for the key press that unlocks sound
-  if (title.stage === 'gate' || !titleArt.ready) {
-    ctx.font = 'bold 18px monospace';
-    ctx.fillStyle = '#2aa4ff';
-    ctx.fillText('E N T E C H', cx, HALF_H - 40);
-    if ((now / 600 | 0) % 2 === 0) {
-      ctx.font = 'bold 16px monospace';
-      ctx.fillStyle = '#e8e8e8';
-      ctx.fillText(titleArt.ready ? 'CLICK OR PRESS ANY KEY' : 'LOADING…', cx, HALF_H + 4);
-    }
-    ctx.font = '11px monospace';
-    ctx.fillStyle = '#666';
-    ctx.fillText(`sound ${audio.muted ? 'OFF' : 'ON'} [N]`, cx, HALF_H + 34);
+  // Loading: black until the art and its effects are ready
+  if (title.stage === 'loading') {
+    ctx.font = 'bold 14px monospace';
+    ctx.fillStyle = '#555';
+    ctx.fillText('LOADING…', cx, HALF_H);
     ctx.textAlign = 'left';
     ctx.textBaseline = 'alphabetic';
     return;
   }
 
-  const landed = t >= LOGO_DROP_MS, fx = titleArt.fx, [ax, ay] = ART_ANCHOR;
-  // Without masks (file://) the whole art punches in instead of the logo dropping
-  const punch = !fx && !landed ? 0.15 * (1 - t / LOGO_DROP_MS) : 0;
+  const intro = title.stage === 'intro' || title.stage === 'ready';
+  const landed = intro && t >= SLAM_MS, slamming = intro && !landed, fx = titleArt.fx, [ax, ay] = ART_ANCHOR;
+  // With masks only the logo punches in; without them (file://) the whole art does
+  const punch = !fx && slamming ? 0.15 * (1 - t / SLAM_MS) : 0;
   const zoom = 1 + 0.04 * (0.5 - 0.5 * Math.cos(now / 20000 * Math.PI)) + punch; // slow push-in and back, 40 s
   const artSpace = () => {
     if (title.shake) ctx.translate((Math.random() * 2 - 1) * title.shake, (Math.random() * 2 - 1) * title.shake);
@@ -2546,11 +2550,16 @@ function drawTitle() {
   ctx.drawImage(titleArt.sides, 0, 0);
   ctx.save();
   artSpace();
-  ctx.drawImage(fx && !landed ? titleArt.bg : titleArt.img, 0, 0);
-  if (fx && landed) drawTitleFx(now, t);
+  ctx.drawImage(titleArt.img, 0, 0);
+  if (fx) drawTitleFx(now, landed ? t : -1); // -1: no logo glint until the slam
+  if (fx && slamming) {
+    // The logo punches in from oversized and slams into place
+    const k = t / SLAM_MS, s = 1 + 0.7 * (1 - k) * (1 - k), [lx, ly, lw, lh] = ART_LOGO;
+    ctx.drawImage(titleArt.logo.c, lx + lw / 2 - lw * s / 2, ly + lh / 2 - lh * s / 2, lw * s, lh * s);
+  }
   if (landed) {
     // ENTECH, just above the logo
-    ctx.globalAlpha = Math.min(1, Math.max(0, (t - LOGO_DROP_MS - 300) / 400));
+    ctx.globalAlpha = Math.min(1, Math.max(0, (t - SLAM_MS - 300) / 400));
     ctx.font = 'bold 50px monospace';
     ctx.lineJoin = 'round';
     ctx.lineWidth = 12;
@@ -2562,23 +2571,15 @@ function drawTitle() {
   }
   ctx.restore();
 
-  // Dark until the logo lands, then the scene brightens
-  const dim = !landed ? 0.82 : Math.max(0, 0.82 * (1 - (t - LOGO_DROP_MS) / 700));
-  if (dim > 0) {
-    ctx.fillStyle = `rgba(0,0,0,${dim})`;
+  // Fade in from black when the art first appears
+  const fade = title.stage === 'art' ? Math.max(0, 1 - t / ART_FADE_MS) : 0;
+  if (fade > 0) {
+    ctx.fillStyle = `rgba(0,0,0,${fade})`;
     ctx.fillRect(0, 0, SCREEN_W, 470);
   }
-  // The falling logo, drawn over the darkness (it accelerates down into its spot)
-  if (fx && !landed) {
-    const k = t / LOGO_DROP_MS, [lx, ly, , lh] = ART_LOGO;
-    ctx.save();
-    artSpace();
-    ctx.drawImage(titleArt.logo.c, lx, ly - (ly + lh) * (1 - k * k));
-    ctx.restore();
-  }
   // Impact flash
-  if (landed && t < LOGO_DROP_MS + 350) {
-    ctx.fillStyle = `rgba(255,250,235,${0.85 * (1 - (t - LOGO_DROP_MS) / 350)})`;
+  if (landed && t < SLAM_MS + 350) {
+    ctx.fillStyle = `rgba(255,250,235,${0.85 * (1 - (t - SLAM_MS) / 350)})`;
     ctx.fillRect(0, 0, SCREEN_W, SCREEN_H);
   }
 
@@ -2587,8 +2588,12 @@ function drawTitle() {
   ctx.fillRect(0, 470, SCREEN_W, SCREEN_H - 470);
   ctx.fillStyle = '#1a1a1a';
   ctx.fillRect(0, 470, SCREEN_W, 1);
-  if (title.stage === 'ready' && (now / 450 | 0) % 2 === 0) {
-    ctx.font = 'bold 15px monospace';
+  const blink = (now / 450 | 0) % 2 === 0;
+  ctx.font = 'bold 15px monospace';
+  if (title.stage === 'art' && t >= PROMPT_DELAY_MS && blink) {
+    ctx.fillStyle = '#e8e8e8';
+    ctx.fillText('PRESS ANY KEY', cx, 486);
+  } else if (title.stage === 'ready' && blink) {
     ctx.fillStyle = '#3dff73';
     ctx.fillText('CLICK OR PRESS ANY KEY TO START', cx, 486);
   }
