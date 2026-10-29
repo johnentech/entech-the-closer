@@ -213,6 +213,21 @@ Doom-style walking sway. In `drawWeapon()` the weapon is translated by `cos(a) �
 
 ---
 
+### Printer attack: glowing test page ✅
+The Printer's shot (projectile kind `ink`, same speed, damage and hit radius as before) now looks like a **Windows-style printer test page**. `testPageFrames()` draws a 32×42 sheet:
+- blue icon square with a tiny printer, top right
+- blue title, rule and subtitle line
+- three bold section headers with two-column label/value rows and file-path lines
+- blank space at the bottom
+
+It returns 8 flutter frames (front → squashed → edge-on → back with faint mirrored print → … ), cycled every `PAGE_FLIP_MS` with a random `p.spin` offset per shot so pages tumble out of sync.
+- `drawSprites` draws a pulsing additive red-magenta `TEX.pageGlow` behind each page (`PAGE_GLOW_SCALE`), then the page (`PAGE_SCALE`, `PAGE_Z`).
+- Trail: `pageTrail` glow dots, plus a `paperScrap` that drifts down every 10 frames.
+- Wall impact: `paperHit` burst + magenta flash.
+- The Printer's wind-up glow and muzzle flash (`pageFlash`), the blob in its attack mouth, and the minimap dot all switched from purple to red-magenta to match. The old `ink*` textures are gone; the projectile kind and sounds keep the `ink` name.
+
+---
+
 ## Remaining chunks
 None planned. Ideas: environment props as sprites (desks, plants, water cooler), music, sharing the game (itch.io private draft → public).
 

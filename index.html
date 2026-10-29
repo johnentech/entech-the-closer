@@ -544,9 +544,9 @@ function drawPrinter(g, R, frame) {
     R('#14081c', 6, 22, 36, 9);
     for (let i = 0; i < 9; i++) R('#fff', 7 + i * 4, 22, 2, 3);
     for (let i = 0; i < 8; i++) R('#fff', 9 + i * 4, 28, 2, 3);
-    g.fillStyle = '#5a1f8a';
+    g.fillStyle = '#e0287a'; // glowing page about to fly out
     g.beginPath(); g.arc(24, 26, 4, 0, Math.PI * 2); g.fill();
-    R('#b77ce6', 22, 24, 2, 1);
+    R('#ffb0d8', 22, 24, 2, 1);
   } else {
     R('#16161a', 7, 23, 34, 4);
     R('#f6f6f6', 12, 25, 24, 6);
@@ -723,6 +723,38 @@ function drawDNS(g, R, mode, phase) {
   });
 }
 
+// The Printer's projectile: a Windows-style printer test page (blue icon square, blue title, label/value rows,
+// file-path lines, blank bottom). 8 frames turn it over and back so it tumbles in flight:
+// front → turning → edge-on → back (faint mirrored print) → turning → edge-on → turning
+function testPageFrames() {
+  const W = 32, H = 42, BLUE = '#1ea4e6', INK = '#3a3a3a', GRAY = '#8a8a8a';
+  const front = makeTex(W, H, (g, R) => {
+    R('#f6f6f4', 0, 0, W, H);
+    R('#d6d6d0', W - 1, 0, 1, H); R('#d6d6d0', 0, H - 1, W, 1);           // paper edge shading
+    R(BLUE, 23, 2, 7, 7);                                                // icon square…
+    R('#ffffff', 25, 3, 3, 1); R('#ffffff', 24, 4, 5, 2); R('#ffffff', 25, 6, 3, 2); // …with a little printer
+    R(BLUE, 2, 10, 17, 2);                                               // title
+    R(INK, 2, 13, 28, 1);                                                // rule
+    R(GRAY, 2, 15, 22, 1);                                               // "You have correctly installed…"
+    const rows = (y0, n, widths) => {
+      for (let i = 0; i < n; i++) { R(GRAY, 2, y0 + i * 2, widths[i][0], 1); R(GRAY, 14, y0 + i * 2, widths[i][1], 1); }
+    };
+    R(INK, 2, 18, 13, 1); rows(20, 3, [[8, 7], [5, 10], [9, 6]]);       // PRINTER PROPERTIES
+    R(INK, 2, 27, 15, 1); rows(29, 2, [[7, 9], [6, 5]]);                 // PRINT DRIVER PROPERTIES
+    R(INK, 2, 34, 16, 1); R(GRAY, 3, 36, 26, 1); R(GRAY, 3, 38, 24, 1); // ADDITIONAL FILES (paths)
+  });
+  const back = makeTex(W, H, g => {
+    g.translate(W, 0); g.scale(-1, 1); g.drawImage(front, 0, 0);         // print showing through, mirrored
+    g.setTransform(1, 0, 0, 1, 0, 0);
+    g.fillStyle = 'rgba(236,234,228,0.8)'; g.fillRect(0, 0, W, H);
+  });
+  const squash = (src, w) => makeTex(w, H, g => { g.imageSmoothingEnabled = false; g.drawImage(src, 0, 0, w, H); });
+  const edge = makeTex(3, H, (g, R) => { R('#d0d0ca', 0, 0, 3, H); R('#ffffff', 1, 0, 1, H); });
+  const front2 = squash(front, 18), back2 = squash(back, 18);
+  return [front, front2, edge, back2, back, back2, edge, front2];
+}
+const PAGE_SCALE = 0.26, PAGE_Z = 0.2, PAGE_GLOW_SCALE = 0.64, PAGE_FLIP_MS = 70;
+
 function enemyTexSet(w, h, draw, drawDead) {
   const set = {
     walk0:  makeTex(w, h, (g, R) => draw(g, R, 'walk0')),
@@ -738,10 +770,12 @@ const TEX = {
   printer: enemyTexSet(48, 44, drawPrinter, drawPrinterDead),
   router:  enemyTexSet(40, 36, drawRouter,  drawRouterDead),
   shadow:  enemyTexSet(44, 60, drawShadow,  drawShadowDead),
-  ink:       radialTex(24, [[0, '#f0d0ff'], [0.2, '#c78cf0'], [0.5, '#6a24a0'], [1, 'rgba(60,10,100,0)']]),
-  inkTrail:  radialTex(16, [[0, 'rgba(160,90,220,0.7)'], [1, 'rgba(90,30,140,0)']]),
-  inkSplat:  radialTex(24, [[0, 'rgba(120,50,180,0.9)'], [0.6, 'rgba(70,20,110,0.6)'], [1, 'rgba(40,10,70,0)']]),
-  inkFlash:  radialTex(32, [[0, 'rgba(240,200,255,0.95)'], [0.35, 'rgba(170,80,240,0.7)'], [1, 'rgba(90,20,160,0)']]),
+  // Printer attack: a tumbling test page (testPageFrames) inside a red-magenta glow
+  testPage:  testPageFrames(),
+  pageGlow:  radialTex(48, [[0, 'rgba(255,150,215,1)'], [0.3, 'rgba(255,50,140,0.8)'], [0.65, 'rgba(230,0,100,0.35)'], [1, 'rgba(160,0,60,0)']]),
+  pageTrail: radialTex(16, [[0, 'rgba(255,120,190,0.8)'], [1, 'rgba(220,0,90,0)']]),
+  pageFlash: radialTex(32, [[0, 'rgba(255,220,240,0.95)'], [0.35, 'rgba(255,60,150,0.7)'], [1, 'rgba(200,0,80,0)']]),
+  paperScrap: makeTex(6, 4, (g, R) => { R('#f4f4f2', 0, 0, 6, 4); R('#8a8a8a', 1, 1, 4, 1); }),
   muzzle:    radialTex(32, [[0, 'rgba(255,255,230,1)'], [0.3, 'rgba(255,220,80,0.85)'], [1, 'rgba(255,140,0,0)']]),
   spark:     radialTex(16, [[0, '#ffffff'], [0.3, '#ffe14a'], [1, 'rgba(255,160,0,0)']]),
   puff:      radialTex(16, [[0, 'rgba(230,230,230,0.9)'], [0.5, 'rgba(170,170,170,0.6)'], [1, 'rgba(120,120,120,0)']]),
@@ -852,7 +886,7 @@ const INK_DMG   = 16;
 const BURST_DMG = [4, 7]; // router: per pellet, min..max
 
 const enemies     = [];
-const projectiles = []; // { kind: 'ink' | 'rocket', x, y, dx, dy, dmg }
+const projectiles = []; // { kind: 'ink' (the Printer's test page) | 'rocket' | 'nx', x, y, dx, dy, dmg, … }
 const explosions  = []; // { x, y, t0 }
 const pickups     = []; // { kind, x, y, amount }
 const effects     = []; // { x, y, z, tex, scale, ms, rise, t0 } — see addEffect()
@@ -864,8 +898,8 @@ const KEY_CHARS     = 'QWERTYASDFGZXCV';
 
 // Pellet impact on each enemy type, and the flash shown when each enemy attacks
 const HIT_TEX          = { printer: TEX.paperHit, router: TEX.spark, shadow: TEX.shadowHit, dns: TEX.spark };
-const ATTACK_FLASH_TEX = { printer: TEX.inkFlash, router: TEX.muzzle, shadow: TEX.shadowHit, dns: TEX.nxGlow };
-const WINDUP_GLOW_TEX  = { printer: TEX.inkFlash, router: TEX.muzzle, shadow: TEX.shadowHit, dns: TEX.nxGlow };
+const ATTACK_FLASH_TEX = { printer: TEX.pageFlash, router: TEX.muzzle, shadow: TEX.shadowHit, dns: TEX.nxGlow };
+const WINDUP_GLOW_TEX  = { printer: TEX.pageFlash, router: TEX.muzzle, shadow: TEX.shadowHit, dns: TEX.nxGlow };
 
 // Pickup kinds: sprite + what happens on touch (return false to leave it on the floor)
 const PICKUPS = {
@@ -1018,7 +1052,8 @@ function enemyAttack(e, dist) {
   sfx(d.ranged, e.x, e.y);
   if (d.ranged === 'ink') {
     const dx = (player.x - e.x) / dist, dy = (player.y - e.y) / dist;
-    projectiles.push({ kind: 'ink', x: e.x + dx * 0.4, y: e.y + dy * 0.4, dx: dx * INK_SPEED, dy: dy * INK_SPEED, dmg: INK_DMG, sx: e.x, sy: e.y, age: 0 });
+    projectiles.push({ kind: 'ink', x: e.x + dx * 0.4, y: e.y + dy * 0.4, dx: dx * INK_SPEED, dy: dy * INK_SPEED, dmg: INK_DMG, sx: e.x, sy: e.y, age: 0,
+                       spin: Math.random() * 8 }); // test page; spin = flutter phase offset
   } else if (d.ranged === 'burst') {
     // 3-pellet hitscan burst; accuracy falls off with range. Misses kick up puffs around you.
     const hitChance = Math.min(0.85, Math.max(0.2, 1 - dist / 12));
@@ -1325,9 +1360,13 @@ function updateProjectiles(now) {
       continue;
     }
     p.x += p.dx; p.y += p.dy;
-    if (++p.age % 3 === 0) addEffect(p.x, p.y, 0.26, TEX.inkTrail, 0.12, 260, 0.02);
+    // Test page: glowing trail, and now and then a paper scrap that drifts down
+    if (++p.age % 3 === 0) addEffect(p.x, p.y, 0.3, TEX.pageTrail, 0.1, 260, 0.02);
+    if (p.age % 10 === 0) addEffect(p.x, p.y, 0.32, TEX.paperScrap, 0.05, 500, -0.2);
     if (isWall(p.x, p.y)) {
-      addEffect(p.x - p.dx, p.y - p.dy, 0.2, TEX.inkSplat, 0.3, 300, 0);
+      // Bursts into paper with a magenta flash
+      addEffect(p.x - p.dx, p.y - p.dy, 0.22, TEX.paperHit, 0.35, 400, 0.1);
+      addEffect(p.x - p.dx, p.y - p.dy, 0.25, TEX.pageTrail, 0.4, 250, 0);
       sfx('splat', p.x - p.dx, p.y - p.dy);
       projectiles.splice(i, 1);
       continue;
@@ -2323,9 +2362,13 @@ function drawSprites() {
   const list = [];
   for (const e of enemies) list.push({ x: e.x, y: e.y, tex: enemyTex(e, now), scale: e.def.scale, z: e.z || 0 });
   for (const p of projectiles) {
-    list.push(p.kind === 'rocket' ? { x: p.x, y: p.y, tex: TEX.rocket, scale: 0.14, z: 0.3 }
-            : p.kind === 'nx'     ? { x: p.x, y: p.y, tex: TEX.nx,     scale: 0.11, z: 0.32 }
-            :                       { x: p.x, y: p.y, tex: TEX.ink,    scale: 0.24, z: 0.22 });
+    if (p.kind === 'rocket') { list.push({ x: p.x, y: p.y, tex: TEX.rocket, scale: 0.14, z: 0.3 }); continue; }
+    if (p.kind === 'nx')     { list.push({ x: p.x, y: p.y, tex: TEX.nx,     scale: 0.11, z: 0.32 }); continue; }
+    // Test page: pulsing red-magenta glow (pushed first, so the page draws on top of it), then the tumbling sheet
+    const pulse = 0.7 + 0.3 * Math.sin(now * 0.02 + p.spin);
+    const gs = PAGE_GLOW_SCALE * (0.9 + 0.1 * pulse);
+    list.push({ x: p.x, y: p.y, tex: TEX.pageGlow, scale: gs, z: PAGE_Z + (PAGE_SCALE - gs) / 2, alpha: pulse, blend: 'lighter' });
+    list.push({ x: p.x, y: p.y, tex: TEX.testPage[(now / PAGE_FLIP_MS + p.spin | 0) % TEX.testPage.length], scale: PAGE_SCALE, z: PAGE_Z });
   }
   for (const k of pickups) list.push({ x: k.x, y: k.y, tex: PICKUPS[k.kind].tex, scale: PICKUPS[k.kind].scale, z: 0 });
   for (const b of explosions) {
@@ -2900,7 +2943,7 @@ function drawMinimap() {
     ctx.fillRect(OX + e.x * S - 2, OY + e.y * S - 2, 3, 3);
   }
   for (const p of projectiles) {
-    ctx.fillStyle = p.kind === 'rocket' ? '#ff8030' : p.kind === 'nx' ? '#ff3050' : '#b77ce6';
+    ctx.fillStyle = p.kind === 'rocket' ? '#ff8030' : p.kind === 'nx' ? '#ff3050' : '#ff4fa0';
     ctx.fillRect(OX + p.x * S - 1, OY + p.y * S - 1, 2, 2);
   }
   // Player dot + direction line
