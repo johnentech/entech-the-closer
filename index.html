@@ -25,7 +25,9 @@ const COLLIDE    = 0.22; // collision margin
 // --- Level ---
 // Office (top left) → hallways → IT Closet (top right) → Server Room (bottom left) → Boss Door → Arena (bottom right)
 // The Server Room's security doors stay locked until the Closing Cannon is picked up in the IT Closet.
+// The boss door stays locked until the override switch (X, inside the Server Room's C-shaped rack) is flipped.
 // Walls:    # concrete   = cubicle divider   S server rack   D boss door   K security door   % IT closet shelving   @ arena wall
+//           X override switch (a rack with a switch on its east face)
 // Entities: P player start   p Printer   r Rogue Router   t tickets   c coffee
 //           C Closing Cannon   o closures (cannon ammo)   F Flush DNS Cache   B DNS boss spawn
 const LEVEL = [
@@ -48,7 +50,7 @@ const LEVEL = [
   '########K#############K##@.............@',
   '#........................@.............@',
   '#..SSS...SSS...SSS.......@.............@',
-  '#..S.S...S..p..S.S...r...@.............@',
+  '#..S.S...X..p..S.S...r...@.............@',
   '#..SSS...SSS...SSS.......@......B......@',
   '#....r...................@.............@',
   '#..........t.............Dc............@',
@@ -60,9 +62,10 @@ const LEVEL = [
   '#F..........c............@c..........tF@',
   '#########################@@@@@@@@@@@@@@@',
 ];
-const WALL_CHARS = { '#': 1, '=': 2, 'S': 3, 'D': 4, '%': 5, '@': 6, 'K': 7 };
+const WALL_CHARS = { '#': 1, '=': 2, 'S': 3, 'D': 4, '%': 5, '@': 6, 'K': 7, 'X': 8 };
 const DOOR          = 4; // boss door
 const SECURITY_DOOR = 7; // server room doors, unlocked by the Closing Cannon
+const SWITCH        = 8; // override switch, unlocks the boss door
 const DOOR_TYPES    = [DOOR, SECURITY_DOOR];
 
 // Parse into MAP (0 = floor, >0 = wall type) and a list of entity spawns
@@ -95,8 +98,9 @@ const WALL_COLORS = {
   5: ['#5f6650', '#454a38'], // IT closet shelving (olive metal)
   6: ['#3e2463', '#2c1848'], // arena wall (DNS purple)
   7: ['#56616c', '#3e4750'], // security door (steel)
+  8: ['#2a3a5a', '#1a2a4a'], // override switch (a server rack; the panel is drawn by drawSwitchColumn)
 };
-const MINIMAP_COLORS = { 1: '#999', 2: '#a08050', 3: '#4a6a9a', 4: '#e33', 5: '#7a8060', 6: '#7a4aa0', 7: '#e0b020' };
+const MINIMAP_COLORS = { 1: '#999', 2: '#a08050', 3: '#4a6a9a', 4: '#e33', 5: '#7a8060', 6: '#7a4aa0', 7: '#e0b020', 8: '#ff9020' };
 
 const canvas = document.getElementById('game');
 const ctx = canvas.getContext('2d');
@@ -136,6 +140,7 @@ const game = {
   cyanFlash: 0, // screen flash when flushing, 1 → 0
   msg: '', msgUntil: 0,
   usePrompt: false,
+  switchOn: false, // override switch flipped → boss door unlocked
   started: false, // false = title screen
   startAt: 0, endAt: 0, // shift timer for the death / victory screens
   overAt: 0, killedBy: null, ticketNo: 0, resolution: '', stamped: false, // death screen
@@ -298,6 +303,12 @@ const SFX = {
   flush:   { play: (o, t) => { noise(o, t, { ms: 900, vol: 0.5, f0: 300, f1: 5000, q: 2, attack: 50 }); tone(o, t, { type: 'sine', f0: 1800, f1: 200, ms: 900, vol: 0.15 }); } },
   door:    { play: (o, t) => { noise(o, t, { ms: 500, vol: 0.35, f0: 2500, f1: 600, attack: 20 }); tone(o, t + 0.45, { f0: 120, ms: 80, vol: 0.15 }); } },
   denied:  { gap: 300, play: (o, t) => { tone(o, t, { f0: 180, ms: 140, vol: 0.14 }); tone(o, t + 0.17, { f0: 140, ms: 220, vol: 0.14 }); } },
+  lever:   { play: (o, t) => {
+    noise(o, t, { ms: 90, vol: 0.6, f0: 900, f1: 200, filter: 'lowpass', attack: 1 });                   // clunk
+    tone(o, t + 0.12, { type: 'sawtooth', f0: 60, f1: 120, ms: 900, vol: 0.12, attack: 200 });           // power-up hum
+    tone(o, t + 0.6, { f0: 880, ms: 120, vol: 0.1 });
+    tone(o, t + 0.75, { f0: 1320, ms: 200, vol: 0.1 });
+  } },
   slam:    { play: (o, t) => { noise(o, t, { ms: 400, vol: 0.8, f0: 600, f1: 60, filter: 'lowpass', attack: 1 }); tone(o, t, { type: 'sine', f0: 70, f1: 35, ms: 500, vol: 0.6 }); } },
   // Screens
   start:   { play: (o, t) => [262, 330, 392, 523].forEach((f, i) => tone(o, t + i * 0.05, { f0: f, ms: 200, vol: 0.1 })) },
@@ -344,6 +355,8 @@ const VOICE = {
   flush_get:   { chance: 1,    cooldown: 0,     priority: 3, lines: [['flush_get_1', "Flush DNS cache. I'm gonna need that."]] },
   flush_use:   { chance: 1,    cooldown: 0,     priority: 4, lines: [['flush_use_1', 'Flush THIS.'], ['flush_use_2', 'ipconfig, slash, flush... D-N-S.']] },
   locked:      { chance: 1,    cooldown: 6000,  priority: 2, lines: [['locked_1', 'Access denied. Of course.'], ['locked_2', 'I need clearance. IT closet, probably.']] },
+  locked_core: { chance: 1,    cooldown: 6000,  priority: 2, lines: [['locked_core_1', "Core's locked down. There's an override in here somewhere."]] },
+  switch:      { chance: 1,    cooldown: 0,     priority: 3, lines: [['switch_1', 'Override engaged. Time to talk to the DNS.']] },
   boss_intro:  { chance: 1,    cooldown: 0,     priority: 5, lines: [['boss_intro_1', "Of course. It's always DNS."]] },
   boss_phase2: { chance: 1,    cooldown: 0,     priority: 4, lines: [['boss_phase2_1', 'Shadow IT? Who approved this?!']] },
   boss_phase3: { chance: 1,    cooldown: 0,     priority: 4, lines: [['boss_phase3_1', "TTL's hitting zero. Now or never."]] },
@@ -739,7 +752,7 @@ const ENEMY_TYPES = {
   router:  { hp: 30,  speed: 0.014, radius: 0.3,  scale: 0.42, sight: 11, stopDist: 1.0,
              attackRange: 9,    meleeRange: 0,    meleeDmg: 0,  ranged: 'burst',
              windupMs: 600, cooldownMs: 2100, painChance: 0.7 },
-  shadow:  { hp: 300, speed: 0.065, radius: 0.4,  scale: 0.8,  sight: 20, stopDist: 0.7,
+  shadow:  { hp: 300, speed: 0.042, radius: 0.4,  scale: 0.8,  sight: 20, stopDist: 0.7,
              attackRange: 1.15, meleeRange: 1.15, meleeDmg: 22, ranged: null,
              windupMs: 220, cooldownMs: 850,  painChance: 0.2 },
   // The boss: AI lives in updateBoss(); only hp/radius/scale are used by shared code
@@ -1276,30 +1289,45 @@ function updatePickups() {
 }
 
 // --- Doors ---
-// Returns the door cell the player is facing within reach ({x, y, type}), or null
+// Returns the door or switch cell the player is facing within reach ({x, y, type}), or null
 function doorAhead() {
   for (const d of [0.6, 1.0, 1.4, 1.8]) {
     const cx = Math.floor(player.x + player.dirX * d);
     const cy = Math.floor(player.y + player.dirY * d);
     if (!isWall(cx, cy)) continue;
     const type = MAP[cy] && MAP[cy][cx];
+    if (type === SWITCH) return player.x > cx + 1 ? { x: cx, y: cy, type } : null; // the panel is on the east face
     return DOOR_TYPES.includes(type) ? { x: cx, y: cy, type } : null;
   }
   return null;
 }
 
-// Security doors open once you have the Closing Cannon; the boss door locks once the fight starts
+// Security doors open once you have the Closing Cannon. The boss door opens once the override switch
+// is flipped, and locks again once the fight starts.
 function doorLocked(type) {
-  return type === SECURITY_DOOR ? !game.hasCannon : game.bossTriggered;
+  if (type === SECURITY_DOOR) return !game.hasCannon;
+  if (type === DOOR) return !game.switchOn || game.bossTriggered;
+  return false;
+}
+
+function flipSwitch() {
+  if (game.switchOn) return;
+  game.switchOn = true;
+  showMessage('OVERRIDE ENGAGED  —  CORE ACCESS UNLOCKED', 3000);
+  sfx('lever');
+  say('switch');
 }
 
 function useAction() {
   const d = doorAhead();
   if (!d || game.over) return;
+  if (d.type === SWITCH) { flipSwitch(); return; }
   if (doorLocked(d.type)) {
-    showMessage(d.type === SECURITY_DOOR ? 'ACCESS DENIED  —  CLEARANCE IS IN THE IT CLOSET' : 'LOCKED  —  RESOLVE THE DNS FIRST');
+    showMessage(d.type === SECURITY_DOOR ? 'ACCESS DENIED  —  CLEARANCE IS IN THE IT CLOSET'
+              : game.bossTriggered ? 'LOCKED  —  RESOLVE THE DNS FIRST'
+              : 'LOCKED  —  FIND THE OVERRIDE SWITCH IN THE SERVER RACKS');
     sfx('denied');
-    say('locked');
+    say(d.type === SECURITY_DOOR ? 'locked' : 'locked_core');
     return;
   }
   MAP[d.y][d.x] = 0;
@@ -1698,6 +1726,7 @@ function render() {
     ctx.fillStyle = cols[raySide]; // side 0 (EW) = light, side 1 (NS) = dark
     ctx.fillRect(x, y0, 1, y1 - y0 + 1);
     if (DOOR_TYPES.includes(rayHit)) drawDoorColumn(x, y0, y1, lineH, rayHit);
+    else if (rayHit === SWITCH && raySide === 0 && player.dirX + player.planeX * camX < 0) drawSwitchColumn(x, lineH);
   }
 
   drawSprites();
@@ -1853,6 +1882,31 @@ function drawDoorColumn(x, y0, y1, lineH, type) {
   if (rayWallX > 0.42 && rayWallX < 0.58) {
     ctx.fillStyle = doorLocked(type) ? '#ff3030' : '#30ff60';
     ctx.fillRect(x, HALF_H - lineH * 0.05, 1, lineH * 0.1);
+  }
+}
+
+// Override switch: a steel panel with a status light and a lever (up = off/red, down = on/green)
+function drawSwitchColumn(x, lineH) {
+  const u = rayWallX;
+  if (u < 0.28 || u > 0.72) return;
+  const top = HALF_H - lineH * 0.2, h = lineH * 0.4;
+  ctx.fillStyle = u < 0.31 || u > 0.69 ? '#111' : '#5a6068'; // panel + dark frame
+  ctx.fillRect(x, top, 1, h);
+  if (u < 0.31 || u > 0.69) return;
+  const on = game.switchOn;
+  // Status light (blinks red while off)
+  if (u > 0.44 && u < 0.56) {
+    ctx.fillStyle = on ? '#30ff60' : (performance.now() / 400 | 0) % 2 ? '#ff3030' : '#601010';
+    ctx.fillRect(x, top + h * 0.08, 1, h * 0.12);
+  }
+  // Lever slot and handle
+  if (u > 0.46 && u < 0.54) {
+    ctx.fillStyle = '#1a1a1a';
+    ctx.fillRect(x, top + h * 0.3, 1, h * 0.6);
+  }
+  if (u > 0.4 && u < 0.6) {
+    ctx.fillStyle = on ? '#30c050' : '#e0b020';
+    ctx.fillRect(x, top + h * (on ? 0.72 : 0.3), 1, h * 0.14);
   }
 }
 
@@ -2384,10 +2438,15 @@ function drawHUD() {
     ctx.fillText(game.msg, SCREEN_W / 2, 49);
   }
   if (game.usePrompt && !game.over) {
-    const locked = doorLocked(game.usePrompt.type);
     ctx.font = 'bold 12px monospace';
-    ctx.fillStyle = locked ? '#ff5050' : '#e8e8e8';
-    ctx.fillText(locked ? 'LOCKED' : '[ E ]  OPEN', SCREEN_W / 2, HALF_H + 50);
+    if (game.usePrompt.type === SWITCH) {
+      ctx.fillStyle = game.switchOn ? '#30ff60' : '#e8e8e8';
+      ctx.fillText(game.switchOn ? 'OVERRIDE ENGAGED' : '[ E ]  FLIP OVERRIDE SWITCH', SCREEN_W / 2, HALF_H + 50);
+    } else {
+      const locked = doorLocked(game.usePrompt.type);
+      ctx.fillStyle = locked ? '#ff5050' : '#e8e8e8';
+      ctx.fillText(locked ? 'LOCKED' : '[ E ]  OPEN', SCREEN_W / 2, HALF_H + 50);
+    }
   }
 
   ctx.textAlign = 'left';
@@ -2399,7 +2458,7 @@ function drawMinimap() {
   ctx.globalAlpha = 0.65;
   for (let r = 0; r < MAP_H; r++) {
     for (let c = 0; c < MAP_W; c++) {
-      ctx.fillStyle = MAP[r][c] > 0 ? MINIMAP_COLORS[MAP[r][c]] : '#111';
+      ctx.fillStyle = MAP[r][c] === SWITCH && game.switchOn ? '#30ff60' : MAP[r][c] > 0 ? MINIMAP_COLORS[MAP[r][c]] : '#111';
       ctx.fillRect(OX + c * S, OY + r * S, S - 1, S - 1);
     }
   }
@@ -2453,7 +2512,7 @@ function drawDeathOverlay() {
   ctx.textAlign = 'center';
   ctx.font = 'bold 26px monospace';
   ctx.fillStyle = '#ff4040';
-  ctx.fillText('YOU GOT A TICKET CLOSED ON YOU.', cx, 88);
+  ctx.fillText("YOU'VE BEEN CLOSED.", cx, 88);
 
   // The ticket
   const W = 500, H = 206, X = cx - W / 2, Y = 124;

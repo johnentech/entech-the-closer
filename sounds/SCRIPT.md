@@ -64,11 +64,23 @@ Plays when you press a key on the title screen.
 | `flush_use_1` | "Flush THIS." |
 | `flush_use_2` | "ipconfig, slash, flush... D-N-S." |
 
-### Locked door, at most every 6 s
+### Locked security door (Server Room), at most every 6 s
 | File | Line |
 |---|---|
 | `locked_1` | "Access denied. Of course." |
 | `locked_2` | "I need clearance. IT closet, probably." |
+
+### Locked boss door (before the override switch), at most every 6 s
+| File | Line |
+|---|---|
+| `locked_core_1` | "Core's locked down. There's an override in here somewhere." |
+
+### Override switch flipped
+Plays when you flip the switch inside the Server Room rack, which unlocks the boss door.
+
+| File | Line |
+|---|---|
+| `switch_1` | "Override engaged. Time to talk to the DNS." |
 
 ### Boss encounter
 Plays when the arena door seals behind you and the DNS appears. This is the big one. Give it some weight.
