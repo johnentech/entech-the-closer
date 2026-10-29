@@ -32,7 +32,7 @@ const COLLIDE    = 0.22; // collision margin
 // The boss door stays locked until the override switch (X, inside the Server Room's C-shaped rack) is flipped.
 // Walls:    # concrete   = cubicle divider   S server rack   D boss door   K security door   % IT closet shelving   @ arena wall
 //           X override switch (a rack with a switch on its east face)
-// Entities: P player start   p Printer   r Rogue Router   t tickets   c coffee
+// Entities: P player start   p Printer   r Rogue Router   t keycaps (keyboard ammo)   c coffee
 //           C Closing Cannon   o closures (cannon ammo)   F Flush DNS Cache   B DNS boss spawn
 const LEVEL = [
   '########################################',
@@ -125,7 +125,7 @@ const zBuf = new Float64Array(SCREEN_W);
 // Game state
 const game = {
   health: 100, maxHealth: 100,
-  ammo: 25,    maxAmmo:   25,      // keyboard: TICKETS
+  ammo: 25,    maxAmmo:   25,      // keyboard: KEYCAPS
   cannonAmmo: 0, maxCannonAmmo: 10, // closing cannon: CLOSURES
   hasCannon: false,
   weapon: 'keyboard',
@@ -149,12 +149,15 @@ const game = {
   startAt: 0, endAt: 0, // shift timer for the death / victory screens
   overAt: 0, killedBy: null, ticketNo: 0, resolution: '', stamped: false, // death screen
   wonAt: 0, typed: 0, bannerShown: false,                                // victory screen
+  emptyAt: 0, emptyMsg: '', // out-of-ammo alert (onEmpty)
 };
 
+// slot = name in the HUD weapon slots, short = name in alerts, key = number key that selects it
 const WEAPONS = {
-  keyboard: { label: '[ KEYBOARD v1.0 ]', ammoLabel: 'TICKETS',  ammo: 'ammo',       max: 'maxAmmo',       COOL_MS: 650, KICK: 44 },
-  cannon:   { label: '[ CLOSING CANNON ]', ammoLabel: 'CLOSURES', ammo: 'cannonAmmo', max: 'maxCannonAmmo', COOL_MS: 950, KICK: 44 },
+  keyboard: { slot: 'KEYBOARD v1.0',  short: 'KEYBOARD', key: 1, ammoLabel: 'KEYCAPS',  ammo: 'ammo',       max: 'maxAmmo',       COOL_MS: 650, KICK: 44, voiceEmpty: 'empty' },
+  cannon:   { slot: 'CLOSING CANNON', short: 'CANNON',   key: 2, ammoLabel: 'CLOSURES', ammo: 'cannonAmmo', max: 'maxCannonAmmo', COOL_MS: 950, KICK: 44, voiceEmpty: 'empty_cannon' },
 };
+const EMPTY_ALERT_MS = 1800;
 const SWITCH_MS = 160; // per half (lower, then raise)
 const FLASH_MS  = 130; // muzzle flash fade
 
@@ -410,7 +413,8 @@ const VOICE_EXTS = ['mp3', 'wav'];
 const SUBTITLES  = true;
 const VOICE = {
   start:       { chance: 1,    cooldown: 0,     priority: 2, lines: [['start_1', "Another Monday. Let's see what's broken."], ['start_2', 'Okay. Who touched the DNS?']] },
-  ammo:        { chance: 0.5,  cooldown: 9000,  priority: 1, lines: [['ammo_1', 'Tickets. Great. More tickets.'], ['ammo_2', "Queue's full again."], ['ammo_3', 'Reloading the backlog.']] },
+  ammo:        { chance: 0.5,  cooldown: 9000,  priority: 1, lines: [['ammo_1', 'More keycaps. Nice and clicky.'], ['ammo_2', 'Fresh keycaps.'], ['ammo_3', 'Reloading the keyboard.']] },
+  closures:    { chance: 0.6,  cooldown: 9000,  priority: 1, lines: [['closures_1', "Closures. Let's close some tickets."]] },
   health:      { chance: 0.6,  cooldown: 9000,  priority: 1, lines: [['health_1', 'Ahh, coffee. SLA restored.'], ['health_2', 'Caffeine. The real uptime.'], ['health_3', "That's the good stuff."]] },
   cannon:      { chance: 1,    cooldown: 0,     priority: 3, lines: [['cannon_1', "Closing Cannon. Now we're resolving tickets."]] },
   flush_get:   { chance: 1,    cooldown: 0,     priority: 3, lines: [['flush_get_1', "Flush DNS cache. I'm gonna need that."]] },
@@ -423,7 +427,8 @@ const VOICE = {
   boss_phase3: { chance: 1,    cooldown: 0,     priority: 4, lines: [['boss_phase3_1', "TTL's hitting zero. Now or never."]] },
   hurt:        { chance: 0.35, cooldown: 1500,  priority: 0, lines: [['hurt_1', ''], ['hurt_2', ''], ['hurt_3', ''], ['hurt_4', '']] },
   low_health:  { chance: 1,    cooldown: 20000, priority: 3, lines: [['low_health_1', 'I need coffee. Now.'], ['low_health_2', "SLA's about to breach..."]] },
-  empty:       { chance: 1,    cooldown: 5000,  priority: 2, lines: [['empty_1', 'Out of tickets!'], ['empty_2', "Queue's empty!"]] },
+  empty:       { chance: 1,    cooldown: 5000,  priority: 2, lines: [['empty_1', 'Out of keycaps!'], ['empty_2', "Keyboard's empty!"]] },
+  empty_cannon: { chance: 1,   cooldown: 5000,  priority: 2, lines: [['empty_cannon_1', 'Out of closures!']] },
   kill:        { chance: 0.15, cooldown: 10000, priority: 1, lines: [['kill_1', 'Ticket closed.'], ['kill_2', 'Resolved.'], ['kill_3', 'Marked as duplicate.']] },
   death:       { chance: 1,    cooldown: 0,     priority: 9, lines: [['death_1', ''], ['death_2', '']] },
   victory:     { chance: 1,    cooldown: 0,     priority: 9, lines: [['victory_1', "Resolved. It was DNS. ...It's always DNS."]] },
@@ -742,13 +747,16 @@ const TEX = {
   }),
   rocket:    radialTex(16, [[0, '#ffffff'], [0.3, '#ff6a3a'], [0.7, '#c01810'], [1, 'rgba(160,10,0,0)']]),
   explosion: radialTex(32, [[0, '#fffbe0'], [0.25, '#ffd040'], [0.6, '#ff6a10'], [1, 'rgba(180,30,0,0)']]),
-  tickets: makeTex(24, 18, (g, R) => {
-    R('#d8d8d8', 3, 6, 19, 11);
-    R('#f4f4f4', 1, 4, 19, 11);
-    R('#ffffff', 2, 2, 19, 11);
-    R('#cfcfcf', 4, 5, 13, 1); R('#cfcfcf', 4, 8, 13, 1);
-    R('#ffd23a', 14, 0, 8, 7);
-    R('#c49a00', 16, 3, 4, 1);
+  // A pile of loose keycaps (back row first so the front row overlaps it); one orange Esc key
+  keycaps: makeTex(24, 18, (g, R) => {
+    const cap = (x, y, accent) => {
+      R('#5c5c5c', x, y + 4, 6, 2);                       // shadowed skirt
+      R(accent ? '#c04a20' : '#a8a8a8', x, y, 6, 5);      // sides
+      R(accent ? '#ff7a45' : '#ececec', x + 1, y, 4, 4);  // top face
+      R(accent ? '#7a2a10' : '#4a4a4a', x + 2, y + 1, 2, 1); // legend
+    };
+    cap(3, 5); cap(9, 4, true); cap(15, 5);
+    cap(0, 11); cap(6, 12); cap(12, 11); cap(18, 12);
   }),
   coffee: makeTex(18, 20, (g, R) => {
     R('rgba(220,220,220,0.5)', 5, 0, 1, 3); R('rgba(220,220,220,0.5)', 6, 3, 1, 2);
@@ -856,10 +864,10 @@ const WINDUP_GLOW_TEX  = { printer: TEX.inkFlash, router: TEX.muzzle, shadow: TE
 
 // Pickup kinds: sprite + what happens on touch (return false to leave it on the floor)
 const PICKUPS = {
-  tickets:  { tex: TEX.tickets,  scale: 0.16, apply: k => {
+  keycaps:  { tex: TEX.keycaps,  scale: 0.16, apply: k => {
     if (game.ammo >= game.maxAmmo) return false;
     game.ammo = Math.min(game.maxAmmo, game.ammo + k.amount);
-    return `+${k.amount} TICKETS`;
+    return `+${k.amount} KEYCAPS`;
   }, sound: 'pickup', voice: 'ammo' },
   coffee:   { tex: TEX.coffee,   scale: 0.14, apply: () => {
     if (game.health >= game.maxHealth) return false;
@@ -870,7 +878,7 @@ const PICKUPS = {
     if (game.cannonAmmo >= game.maxCannonAmmo) return false;
     game.cannonAmmo = Math.min(game.maxCannonAmmo, game.cannonAmmo + 3);
     return '+3 CLOSURES';
-  }, sound: 'pickup', voice: 'ammo' },
+  }, sound: 'pickup', voice: 'closures' },
   cannon:   { tex: TEX.cannon,   scale: 0.18, apply: () => {
     game.hasCannon  = true;
     game.cannonAmmo = Math.min(game.maxCannonAmmo, game.cannonAmmo + 5);
@@ -900,7 +908,7 @@ function spawnEnemy(type, x, y) {
 const SPAWN_CHARS = {
   p: s => spawnEnemy('printer', s.x, s.y),
   r: s => spawnEnemy('router',  s.x, s.y),
-  t: s => pickups.push({ kind: 'tickets',  x: s.x, y: s.y, amount: 8 }),
+  t: s => pickups.push({ kind: 'keycaps',  x: s.x, y: s.y, amount: 8 }),
   c: s => pickups.push({ kind: 'coffee',   x: s.x, y: s.y }),
   o: s => pickups.push({ kind: 'closures', x: s.x, y: s.y }),
   C: s => pickups.push({ kind: 'cannon',   x: s.x, y: s.y }),
@@ -937,7 +945,7 @@ function damageEnemy(e, dmg, now) {
       pickups.push({ kind: 'coffee',   ...spot(e.x - sx, e.y - sy) });
       pickups.push({ kind: 'closures', ...spot(e.x + sx, e.y + sy) });
     } else if (Math.random() < 0.6) {
-      pickups.push({ kind: 'tickets', x: e.x, y: e.y, amount: 4 });
+      pickups.push({ kind: 'keycaps', x: e.x, y: e.y, amount: 4 });
     }
     return true;
   }
@@ -1465,6 +1473,26 @@ function cycleWeapon() {
   switchWeapon((weapon.next || game.weapon) === 'keyboard' ? 'cannon' : 'keyboard');
 }
 
+function hasAmmo(name) {
+  return (name === 'keyboard' || game.hasCannon) && game[WEAPONS[name].ammo] > 0;
+}
+
+// The current weapon just ran dry (last shot fired) or was dry-fired: flash an alert and,
+// if the other weapon has ammo, switch to it (the swap starts once the current shot finishes cooling)
+function onEmpty(dryFire) {
+  const w = WEAPONS[game.weapon];
+  const other = game.weapon === 'keyboard' ? 'cannon' : 'keyboard';
+  game.emptyAt = performance.now();
+  if (hasAmmo(other)) {
+    game.emptyMsg = `${w.ammoLabel} EMPTY  —  SWITCHING TO ${WEAPONS[other].short}`;
+    switchWeapon(other);
+  } else {
+    game.emptyMsg = game.hasCannon ? 'NO AMMO' : `OUT OF ${w.ammoLabel}`;
+  }
+  if (dryFire) sfx('empty');
+  say(w.voiceEmpty);
+}
+
 // --- Title / restart ---
 // quiet = restarting from R: no gesture yet, so no start jingle (audio resumes on the next key/click)
 function startGame(quiet) {
@@ -1534,7 +1562,7 @@ document.addEventListener('mousemove', e => {
 function shoot() {
   const w = WEAPONS[game.weapon];
   if (game.over || game.won || weapon.state !== 'idle') return;
-  if (game[w.ammo] <= 0) { sfx('empty'); say('empty'); return; } // Chunk 7: louder empty alert + auto-switch
+  if (game[w.ammo] <= 0) { onEmpty(true); return; }
   const now = performance.now();
   game[w.ammo]--;
   sfx(game.weapon);
@@ -1542,6 +1570,7 @@ function shoot() {
   weapon.fireAt = now;
   weapon.kickY  = 0;
   weapon.flash  = 1.0;
+  if (game[w.ammo] === 0) onEmpty(false); // that was the last one
 
   if (game.weapon === 'cannon') {
     projectiles.push({
@@ -2454,28 +2483,47 @@ function drawHUD() {
   ctx.fillStyle = '#333';
   ctx.fillRect(250, SCREEN_H - 34, 1, 32);
 
-  // Weapon label (+ slot hint once there's something to switch to)
-  ctx.fillStyle = '#555';
-  ctx.font = '10px monospace';
-  ctx.textAlign = 'center';
-  ctx.fillText(w.label, SCREEN_W / 2, game.hasCannon ? midY - 6 : midY);
-  if (game.hasCannon) {
-    ctx.fillStyle = '#3a3a3a';
-    ctx.fillText(game.weapon === 'keyboard' ? '[1] keyboard   2  cannon' : ' 1  keyboard  [2] cannon', SCREEN_W / 2, midY + 8);
-  }
+  // Weapon slots: key, name, ammo. Active = green frame; empty = red; not picked up yet = dark
+  const now = performance.now();
+  const blink = (now / 250 | 0) % 2 === 0;
+  ['keyboard', 'cannon'].forEach((name, i) => {
+    const W = WEAPONS[name], owned = name === 'keyboard' || game.hasCannon;
+    const n = game[W.ammo], active = name === game.weapon, empty = owned && n <= 0;
+    const sx = 262 + i * 142, sy = SCREEN_H - 31, sw = 134, sh = 26;
+    ctx.fillStyle = active ? 'rgba(30,90,45,0.55)' : 'rgba(255,255,255,0.03)';
+    ctx.fillRect(sx, sy, sw, sh);
+    ctx.strokeStyle = !owned ? '#222' : active ? (empty && blink ? '#ff3030' : '#3dff73') : empty ? '#502020' : '#444';
+    ctx.lineWidth = active ? 2 : 1;
+    ctx.strokeRect(sx + 0.5, sy + 0.5, sw - 1, sh - 1);
+    // Key badge
+    ctx.fillStyle = !owned ? '#1a1a1a' : active ? '#3dff73' : '#333';
+    ctx.fillRect(sx + 5, sy + 6, 14, 14);
+    ctx.fillStyle = !owned ? '#333' : active ? '#000' : '#aaa';
+    ctx.font = 'bold 10px monospace';
+    ctx.textAlign = 'center';
+    ctx.fillText(`${W.key}`, sx + 12, sy + 13);
+    // Name and ammo
+    ctx.textAlign = 'left';
+    ctx.fillStyle = !owned ? '#333' : empty ? '#a03030' : active ? '#e8e8e8' : '#888';
+    ctx.fillText(owned ? W.slot : '- - -', sx + 25, sy + 13);
+    ctx.textAlign = 'right';
+    ctx.font = 'bold 12px monospace';
+    ctx.fillStyle = !owned ? '#333' : empty ? '#ff3030' : active ? '#3dff73' : '#888';
+    ctx.fillText(owned ? `${n}` : '--', sx + sw - 6, sy + 13);
+  });
 
   // Divider
   ctx.fillStyle = '#333';
   ctx.fillRect(SCREEN_W - 250, SCREEN_H - 34, 1, 32);
 
-  // Ammo for the current weapon
+  // Ammo for the current weapon (pulses red when empty)
   const ammo = game[w.ammo], max = game[w.max];
-  ctx.fillStyle = '#666';
+  ctx.fillStyle = ammo <= 0 ? (blink ? '#ff3030' : '#601010') : '#666';
   ctx.font = 'bold 10px monospace';
   ctx.textAlign = 'right';
   ctx.fillText(w.ammoLabel, SCREEN_W - 90, midY);
 
-  const ammoColor = ammo > max * 0.4 ? '#22cc55' : ammo > max * 0.16 ? '#ccaa00' : '#cc2200';
+  const ammoColor = ammo <= 0 ? (blink ? '#ff3030' : '#601010') : ammo > max * 0.4 ? '#22cc55' : ammo > max * 0.16 ? '#ccaa00' : '#cc2200';
   ctx.fillStyle = ammoColor;
   ctx.font = 'bold 18px monospace';
   ctx.fillText(`${ammo}`, SCREEN_W - 40, midY + 1);
@@ -2522,6 +2570,22 @@ function drawHUD() {
       ctx.fillStyle = locked ? '#ff5050' : '#e8e8e8';
       ctx.fillText(locked ? 'LOCKED' : '[ E ]  OPEN', SCREEN_W / 2, HALF_H + 50);
     }
+  }
+
+  // Out-of-ammo alert: flashes hard at first, then holds steady until it fades
+  const ea = now - game.emptyAt;
+  if (game.emptyAt && ea < EMPTY_ALERT_MS && (ea > 600 || blink)) {
+    ctx.font = 'bold 16px monospace';
+    const tw = ctx.measureText(game.emptyMsg).width;
+    ctx.globalAlpha = Math.min(1, (EMPTY_ALERT_MS - ea) / 300);
+    ctx.fillStyle = 'rgba(40,0,0,0.75)';
+    ctx.fillRect(SCREEN_W / 2 - tw / 2 - 14, HALF_H + 66, tw + 28, 28);
+    ctx.strokeStyle = '#ff3030';
+    ctx.lineWidth = 1;
+    ctx.strokeRect(SCREEN_W / 2 - tw / 2 - 13.5, HALF_H + 66.5, tw + 27, 27);
+    ctx.fillStyle = '#ff4040';
+    ctx.fillText(game.emptyMsg, SCREEN_W / 2, HALF_H + 80);
+    ctx.globalAlpha = 1;
   }
 
   ctx.textAlign = 'left';

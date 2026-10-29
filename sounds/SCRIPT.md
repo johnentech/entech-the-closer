@@ -38,12 +38,17 @@ Plays when you press a key on the title screen.
 | `start_1` | "Another Monday. Let's see what's broken." |
 | `start_2` | "Okay. Who touched the DNS?" |
 
-### Ammo pickup (tickets or closures), 50% chance, at most every 9 s
+### Keycaps pickup (keyboard ammo), 50% chance, at most every 9 s
 | File | Line |
 |---|---|
-| `ammo_1` | "Tickets. Great. More tickets." |
-| `ammo_2` | "Queue's full again." |
-| `ammo_3` | "Reloading the backlog." |
+| `ammo_1` | "More keycaps. Nice and clicky." |
+| `ammo_2` | "Fresh keycaps." |
+| `ammo_3` | "Reloading the keyboard." |
+
+### Closures pickup (Closing Cannon ammo), 60% chance, at most every 9 s
+| File | Line |
+|---|---|
+| `closures_1` | "Closures. Let's close some tickets." |
 
 ### Health pickup (coffee), 60% chance, at most every 9 s
 | File | Line |
@@ -108,11 +113,12 @@ Short grunts and "oof"s, no words. These play often, so record **4 different one
 | `low_health_1` | "I need coffee. Now." |
 | `low_health_2` | "SLA's about to breach..." |
 
-### Out of ammo (you fire on empty), at most every 5 s
+### Out of ammo (the weapon runs dry), at most every 5 s
 | File | Line |
 |---|---|
-| `empty_1` | "Out of tickets!" |
-| `empty_2` | "Queue's empty!" |
+| `empty_1` | "Out of keycaps!" *(keyboard)* |
+| `empty_2` | "Keyboard's empty!" *(keyboard)* |
+| `empty_cannon_1` | "Out of closures!" *(Closing Cannon)* |
 
 ### Enemy killed, 15% chance, at most every 10 s (optional)
 | File | Line |
@@ -142,7 +148,7 @@ Plays when "CONNECTION ESTABLISHED." appears after the boss dies.
 To add another take, put the file in `sounds/voice/` (e.g. `ammo_4.mp3`). Then add it to that event's `lines` in the `VOICE` table in `index.html`:
 
 ```js
-ammo: { chance: 0.5, cooldown: 9000, priority: 1, lines: [['ammo_1', 'Tickets. Great. More tickets.'], /* … */ ['ammo_4', 'Your new subtitle.']] },
+ammo: { chance: 0.5, cooldown: 9000, priority: 1, lines: [['ammo_1', 'More keycaps. Nice and clicky.'], /* … */ ['ammo_4', 'Your new subtitle.']] },
 ```
 
 Leave the subtitle as `''` for lines without words (grunts). In the same table you can tune `chance`, `cooldown` (ms) and `priority`; a higher-priority line interrupts a lower one.

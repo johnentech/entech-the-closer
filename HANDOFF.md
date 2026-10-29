@@ -149,17 +149,34 @@ Working title: **DNS: The Reckoning**. Player is an IT tech who fights office eq
 
 ---
 
+### Chunk 7 — Ammo UX + KEYCAPS rename ✅
+The user cancelled "more ammo before the boss" and "timed boss-fight resupply". Shadow IT's coffee + closures drops stay.
+- **Keyboard ammo renamed TICKETS → KEYCAPS**: HUD label, `+8 / +4 KEYCAPS` pickup and drop messages, pickup kind `keycaps` (level char `t`), and `TEX.keycaps`, now drawn as a pile of keycaps with an orange Esc key. **"TICKETS CLOSED" (the kill counter) is unchanged**, and so are `cannon_1` and `kill_1`, which are about closing tickets. Older sections of this file still say "tickets" when they mean keyboard ammo.
+- **Voice:** `ammo_1–3` and `empty_1–2` reworded for keycaps. New `empty_cannon_1` ("Out of closures!") and `closures_1` ("Closures. Let's close some tickets."); closures pickups now use the `closures` event, not `ammo`. `sounds/SCRIPT.md` is updated to match.
+- **`onEmpty(dryFire)`** runs when the last round leaves the weapon (from `shoot()`) or on a dry-fire. It shows a flashing center alert under the crosshair (`EMPTY_ALERT_MS` 1.8 s: hard blink for 0.6 s, then steady, then fade):
+  - other weapon has ammo → **"KEYCAPS EMPTY — SWITCHING TO CANNON"** / **"CLOSURES EMPTY — SWITCHING TO KEYBOARD"**, plus `switchWeapon(other)` (the swap starts once the current shot finishes cooling)
+  - both empty (cannon owned) → **"NO AMMO"**; no cannon yet → **"OUT OF KEYCAPS"**
+  - Also plays a dry click (dry-fire only) and the weapon's empty voice line (`WEAPONS[].voiceEmpty`). `hasAmmo(name)` is the helper.
+- **Ammo counter** (bottom right): label and number blink red while the current weapon is at 0.
+- **HUD weapon slots** replace the old weapon label and `[1] keyboard 2 cannon` hint. Two boxes in the center of the bar, each showing a key badge (1 / 2), the name (`WEAPONS[].slot`) and the ammo count:
+  - active: green frame and fill (the frame blinks red if it's empty)
+  - empty: red name and 0
+  - not picked up yet: dark `- - -` / `--`
+- `WEAPONS` gained `slot`, `short`, `key` and `voiceEmpty`, and lost `label`.
+- Verified in the browser: keycaps sprite, slots, keycaps→cannon auto-switch, closures→keyboard auto-switch, NO AMMO, OUT OF KEYCAPS without the cannon, and no console errors.
+
+**Balance to watch:** two awake enemies take ~60 HP in a few seconds if you stand still. Coffee pickups offset this; tune `INK_DMG`, router burst damage or coffee count after a real play-through.
+
+---
+
 ## Remaining chunks
 
-### Chunk 7 — Balance & ammo UX (NEXT)
-From play-test round 2 (user feedback after Chunk 5):
-- **More ammo before the boss.** Players reach the arena short on ammo. Raise drop rates/amounts from regular enemies (currently 60% chance of +4 tickets) and/or place more ticket/closure pickups along the route (especially the Server Room).
-- **Boss fight resupply from phase 2.** Once the DNS enters phase 2, periodically spawn HP (coffee) and ammo (tickets/closures) pickups in the arena — e.g. on a timer at random `ARENA_CELLS` away from the boss, with a spawn effect and cap on how many are on the floor. (Shadow IT add drops alone aren't enough.)
-- **Make "out of ammo" obvious.** Firing on empty now only plays a dry-fire click and the `empty` voice line (Chunk 6). Add a clear on-screen alert: flashing "OUT OF TICKETS" / "OUT OF CLOSURES" and a red pulse on the ammo counter.
-- **Auto-switch weapon when empty**, with an on-screen alert (e.g. "CLOSURES EMPTY — SWITCHING TO KEYBOARD"). Only switch if the other weapon has ammo; if both are empty, show "NO AMMO" instead.
-- **HUD weapon-switch hints.** Make it obvious you can switch: show both weapon slots with key labels (1 / 2) and their ammo counts, highlight the active one, and dim/strike a slot that's empty or not owned. (Current hint is a faint `[1] keyboard 2 cannon` line under the weapon label.)
-
-**Balance to watch:** two awake enemies take ~60 HP in a few seconds if you stand still. Coffee pickups now offset this; tune `INK_DMG`, router burst damage or coffee count after a real play-through.
+### Chunk 8 — Map textures (NEXT)
+The world is flat-colored, so add basic procedural textures, drawn in code like the sprites (no image files):
+- **Walls:** concrete (`#`), cubicle fabric (`=`), server racks with blinking LEDs (`S`), IT closet shelving (`%`), purple arena walls (`@`), and doors with panel detail (boss `D`, security `K`), keeping the existing lock lights / stripes. The override switch (`X`) keeps its panel on a rack texture. Sample a texture column per screen column using `rayWallX`; shade by wall face and distance so depth reads better.
+- **Floors:** textured via per-pixel floor casting into an `ImageData` buffer. Office carpet, a different floor in the Server Room (raised-floor tiles) and in the arena (DNS purple). Pick the floor texture by map region (e.g. the `ARENA` mask; the Server Room bounds).
+- **Ceiling stays a flat color** (user's call; maybe later).
+- **Performance:** floor casting touches ~200k pixels per frame. Measure the frame time and keep it smooth (lower floor resolution or skip distant rows if needed).
 
 ---
 
@@ -200,5 +217,5 @@ render()         — [shake + death slump] ceiling → floor → raycaster (+dra
 - MOVE_SPEED = 0.055, ROT_SPEED = 0.038, COLLIDE margin = 0.22
 - Keyboard: 7 pellets, SPREAD = 0.09, cooldown 650ms
 - Closing Cannon: rocket 0.16 tiles/frame, splash 140 over 2.2 tiles, 40% self-damage, cooldown 950ms
-- HUD labels: health = "SLA", keyboard ammo = "TICKETS", cannon ammo = "CLOSURES", kills = "TICKETS CLOSED"
+- HUD labels: health = "SLA", keyboard ammo = "KEYCAPS", cannon ammo = "CLOSURES", kills = "TICKETS CLOSED"
 - Boss death line: "SERVFAIL"
