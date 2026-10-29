@@ -289,6 +289,15 @@ Both first-person weapons were redrawn (`// --- First-person weapons: chunky pix
 
 ---
 
+### One Server Room door, clearer lock prompts ✅
+- **Removed the starting office's security door.** Play-testers were confused by two doors into the same area. The door at (8,16) and its 3-tile hallway (cols 8–9, rows 13–15) are solid wall now, and the keycaps pickup that sat in that hallway moved into the office at (8,12), where the hallway used to open. The only Server Room door is the one at the bottom of the hallway from the IT Closet, (22,16), still locked until the Closing Cannon is picked up.
+- **Lock prompts under the crosshair** (`drawHUD`), replacing the plain "LOCKED":
+  - Server Room door: **"ACQUIRE CLOSING CANNON TO PROCEED"**
+  - Boss door: **"RESET THE MAIN SWITCH TO UNLOCK"**, or "LOCKED" once it has re-sealed behind you for the fight
+- **The override switch is now the "main switch"** in all on-screen text: "[ E ] RESET MAIN SWITCH" → "MAIN SWITCH RESET", "MAIN SWITCH RESET — CORE ACCESS UNLOCKED", and "LOCKED — FIND THE MAIN SWITCH IN THE SERVER RACKS". Older sections of this file still say "override switch". The voice subtitles `locked_core_1` / `switch_1` keep "override", since they must match what was recorded; change them together with the audio if the lines are re-recorded.
+
+---
+
 ## Remaining chunks
 None planned. Ideas: environment props as sprites (desks, plants, water cooler), music, sharing the game (itch.io private draft → public).
 

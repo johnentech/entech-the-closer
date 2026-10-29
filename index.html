@@ -29,9 +29,9 @@ const COLLIDE    = 0.22; // collision margin
 // --- Level ---
 // Office (top left) → hallways → IT Closet (top right) → Server Room (bottom left) → Boss Door → Arena (bottom right)
 // The Server Room's security doors stay locked until the Closing Cannon is picked up in the IT Closet.
-// The boss door stays locked until the override switch (X, inside the Server Room's C-shaped rack) is flipped.
+// The boss door stays locked until the main switch (X, inside the Server Room's C-shaped rack) is flipped.
 // Walls:    # concrete   = cubicle divider   S server rack   D boss door   K security door   % IT closet shelving   @ arena wall
-//           X override switch (a rack with a switch on its east face)
+//           X main switch (a rack with a switch on its east face)
 // Entities: P player start   p Printer   r Rogue Router   t keycaps (keyboard ammo)   c coffee
 //           C Closing Cannon   o closures (cannon ammo)   F Flush DNS Cache   B DNS boss spawn
 const LEVEL = [
@@ -47,11 +47,11 @@ const LEVEL = [
   '#.................####..#####%o...C...t#',
   '#..c......p.......####..#####%%%%%%%%%%%',
   '#...==..==...==...####..#@@@@@@@@@@@@@@@',
-  '#.................####p.#@t...........o@',
-  '########..############..#@.............@',
-  '########t.############..#@..@@.....@@..@',
-  '########..############..#@..@@.....@@..@',
-  '########K#############K##@.............@',
+  '#.......t.........####p.#@t...........o@',
+  '######################..#@.............@',
+  '######################..#@..@@.....@@..@',
+  '######################..#@..@@.....@@..@',
+  '######################K##@.............@',
   '#........................@.............@',
   '#..SSS...SSS...SSS.......@.............@',
   '#..S.S...X..p..S.S...r...@.............@',
@@ -69,7 +69,7 @@ const LEVEL = [
 const WALL_CHARS = { '#': 1, '=': 2, 'S': 3, 'D': 4, '%': 5, '@': 6, 'K': 7, 'X': 8 };
 const DOOR          = 4; // boss door
 const SECURITY_DOOR = 7; // server room doors, unlocked by the Closing Cannon
-const SWITCH        = 8; // override switch, unlocks the boss door
+const SWITCH        = 8; // main switch, unlocks the boss door
 const DOOR_TYPES    = [DOOR, SECURITY_DOOR];
 
 // Parse into MAP (0 = floor, >0 = wall type) and a list of entity spawns
@@ -134,7 +134,7 @@ const game = {
   cyanFlash: 0, // screen flash when flushing, 1 → 0
   msg: '', msgUntil: 0,
   usePrompt: false,
-  switchOn: false, // override switch flipped → boss door unlocked
+  switchOn: false, // main switch reset → boss door unlocked
   started: false, // false = title screen
   startAt: 0, endAt: 0, // shift timer for the death / victory screens
   overAt: 0, killedBy: null, ticketNo: 0, resolution: '', stamped: false, // death screen
@@ -1686,7 +1686,7 @@ function doorAhead() {
   return null;
 }
 
-// Security doors open once you have the Closing Cannon. The boss door opens once the override switch
+// Security doors open once you have the Closing Cannon. The boss door opens once the main switch
 // is flipped, and locks again once the fight starts.
 function doorLocked(type) {
   if (type === SECURITY_DOOR) return !game.hasCannon;
@@ -1697,7 +1697,7 @@ function doorLocked(type) {
 function flipSwitch() {
   if (game.switchOn) return;
   game.switchOn = true;
-  showMessage('OVERRIDE ENGAGED  —  CORE ACCESS UNLOCKED', 3000);
+  showMessage('MAIN SWITCH RESET  —  CORE ACCESS UNLOCKED', 3000);
   sfx('lever');
   say('switch');
 }
@@ -1709,7 +1709,7 @@ function useAction() {
   if (doorLocked(d.type)) {
     showMessage(d.type === SECURITY_DOOR ? 'ACCESS DENIED  —  CLEARANCE IS IN THE IT CLOSET'
               : game.bossTriggered ? 'LOCKED  —  RESOLVE THE DNS FIRST'
-              : 'LOCKED  —  FIND THE OVERRIDE SWITCH IN THE SERVER RACKS');
+              : 'LOCKED  —  FIND THE MAIN SWITCH IN THE SERVER RACKS');
     sfx('denied');
     say(d.type === SECURITY_DOOR ? 'locked' : 'locked_core');
     return;
@@ -2369,7 +2369,7 @@ const WALL_TEX = {
   5: [faces(MAP_TEX.shelving)],
   6: [faces(MAP_TEX.arena)],
   7: [faces(MAP_TEX.secDoor)],
-  8: RACK_FRAMES, // override switch (panel drawn on top)
+  8: RACK_FRAMES, // main switch (panel drawn on top)
 };
 const RACK_BLINK_MS = 350;
 
@@ -2789,7 +2789,7 @@ function drawDoorColumn(x, y0, y1, lineH, type) {
   }
 }
 
-// Override switch: a steel panel with a status light and a lever (up = off/red, down = on/green)
+// Main switch: a steel panel with a status light and a lever (up = off/red, down = on/green)
 function drawSwitchColumn(x, lineH) {
   const u = rayWallX;
   if (u < 0.28 || u > 0.72) return;
@@ -3518,11 +3518,13 @@ function drawHUD() {
     ctx.font = 'bold 12px monospace';
     if (game.usePrompt.type === SWITCH) {
       ctx.fillStyle = game.switchOn ? '#30ff60' : '#e8e8e8';
-      ctx.fillText(game.switchOn ? 'OVERRIDE ENGAGED' : '[ E ]  FLIP OVERRIDE SWITCH', SCREEN_W / 2, HALF_H + 50);
+      ctx.fillText(game.switchOn ? 'MAIN SWITCH RESET' : '[ E ]  RESET MAIN SWITCH', SCREEN_W / 2, HALF_H + 50);
     } else {
-      const locked = doorLocked(game.usePrompt.type);
+      const type = game.usePrompt.type, locked = doorLocked(type);
+      const lockedText = type === SECURITY_DOOR ? 'ACQUIRE CLOSING CANNON TO PROCEED'
+                       : game.bossTriggered ? 'LOCKED' : 'RESET THE MAIN SWITCH TO UNLOCK'; // re-sealed once the fight starts
       ctx.fillStyle = locked ? '#ff5050' : '#e8e8e8';
-      ctx.fillText(locked ? 'LOCKED' : '[ E ]  OPEN', SCREEN_W / 2, HALF_H + 50);
+      ctx.fillText(locked ? lockedText : '[ E ]  OPEN', SCREEN_W / 2, HALF_H + 50);
     }
   }
 
