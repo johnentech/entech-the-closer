@@ -1,4 +1,4 @@
-# DNS: The Reckoning — Voice Recording Script
+# ENTECH: The Closer — Voice Recording Script
 
 The voice actor plays **the player character**: the last IT tech on shift. They're tired, dry and sarcastic, but competent. Think "seen it all, and it's always DNS."
 
