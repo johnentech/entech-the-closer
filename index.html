@@ -12,7 +12,7 @@
 </head>
 <body>
 <canvas id="game"></canvas>
-<div id="controls">WASD move · ←/→/mouse turn · Click/Space fire · 1/2/Q weapon · E use · F flush · M map</div>
+<div id="controls">WASD move · ←/→/mouse turn · Click/Space fire · 1/2/Q weapon · E use · F flush · M map · N sound</div>
 <script>
 const SCREEN_W = 800;
 const SCREEN_H = 500;
@@ -136,6 +136,10 @@ const game = {
   cyanFlash: 0, // screen flash when flushing, 1 → 0
   msg: '', msgUntil: 0,
   usePrompt: false,
+  started: false, // false = title screen
+  startAt: 0, endAt: 0, // shift timer for the death / victory screens
+  overAt: 0, killedBy: null, ticketNo: 0, resolution: '', stamped: false, // death screen
+  wonAt: 0, typed: 0, bannerShown: false,                                // victory screen
 };
 
 const WEAPONS = {
@@ -172,6 +176,234 @@ const SPLASH_RADIUS = 2.2;
 const SPLASH_DMG    = 140; // direct hit still kills a Printer
 const SELF_DMG_MULT = 0.4;
 const EXPLOSION_MS  = 350;
+
+// --- Audio ---
+// Sound effects are synthesized with Web Audio (no files). Voice lines are recordings in sounds/voice/
+// (see sounds/SCRIPT.md). Browsers only start audio after a user gesture, so ensureAudio() runs on every key/click.
+const audio = { ctx: null, master: null, sfx: null, noise: null, muted: false, last: {}, upsAt: 0 };
+try { audio.muted = localStorage.getItem('dnsMuted') === '1'; } catch (e) {}
+
+function ensureAudio() {
+  if (!audio.ctx) {
+    const AC = window.AudioContext || window.webkitAudioContext;
+    if (!AC) return;
+    const c = audio.ctx = new AC();
+    const comp = c.createDynamicsCompressor(); // keeps stacked explosions from clipping
+    comp.connect(c.destination);
+    audio.master = c.createGain();
+    audio.master.gain.value = audio.muted ? 0 : 0.8;
+    audio.master.connect(comp);
+    audio.sfx = c.createGain(); // ducked while a voice line plays
+    audio.sfx.connect(audio.master);
+    // 1 s of white noise, shared by every noise burst
+    audio.noise = c.createBuffer(1, c.sampleRate, c.sampleRate);
+    const d = audio.noise.getChannelData(0);
+    for (let i = 0; i < d.length; i++) d[i] = Math.random() * 2 - 1;
+  }
+  if (audio.ctx.state === 'suspended') audio.ctx.resume();
+}
+
+function toggleMute() {
+  audio.muted = !audio.muted;
+  try { localStorage.setItem('dnsMuted', audio.muted ? '1' : '0'); } catch (e) {}
+  if (audio.master) audio.master.gain.value = audio.muted ? 0 : 0.8;
+  if (audio.muted) stopVoice();
+  if (game.started) showMessage(audio.muted ? 'SOUND OFF' : 'SOUND ON', 1200);
+}
+
+// Oscillator blip: frequency glides f0 → f1, fast attack, exponential decay
+function tone(out, t, { type = 'square', f0, f1 = f0, ms, vol = 0.3, attack = 4 }) {
+  const c = audio.ctx, o = c.createOscillator(), g = c.createGain(), end = t + ms / 1000;
+  o.type = type;
+  o.frequency.setValueAtTime(f0, t);
+  if (f1 !== f0) o.frequency.exponentialRampToValueAtTime(f1, end);
+  g.gain.setValueAtTime(0.0001, t);
+  g.gain.exponentialRampToValueAtTime(vol, t + attack / 1000);
+  g.gain.exponentialRampToValueAtTime(0.0001, end);
+  o.connect(g).connect(out);
+  o.start(t);
+  o.stop(end + 0.02);
+}
+
+// Filtered noise burst; the filter cutoff glides f0 → f1
+function noise(out, t, { ms, vol = 0.3, f0 = 2000, f1 = f0, q = 1, filter = 'bandpass', attack = 2 }) {
+  const c = audio.ctx, s = c.createBufferSource(), f = c.createBiquadFilter(), g = c.createGain(), end = t + ms / 1000;
+  s.buffer = audio.noise;
+  s.loop = true;
+  f.type = filter;
+  f.Q.value = q;
+  f.frequency.setValueAtTime(f0, t);
+  if (f1 !== f0) f.frequency.exponentialRampToValueAtTime(f1, end);
+  g.gain.setValueAtTime(0.0001, t);
+  g.gain.exponentialRampToValueAtTime(vol, t + attack / 1000);
+  g.gain.exponentialRampToValueAtTime(0.0001, end);
+  s.connect(f).connect(g).connect(out);
+  s.start(t, Math.random() * 0.5);
+  s.stop(end + 0.02);
+}
+
+// gap = minimum ms between two plays of the same sound (stops a crowd of enemies from stacking it)
+const SFX = {
+  // Weapons
+  keyboard:  { play: (o, t) => {
+    noise(o, t, { ms: 110, vol: 0.55, f0: 1400, f1: 180, filter: 'lowpass' });
+    for (let i = 0; i < 7; i++) noise(o, t + i * 0.011 + Math.random() * 0.006, { ms: 22, vol: 0.3, f0: 3000 + Math.random() * 3000, q: 5 });
+  } },
+  cannon:    { play: (o, t) => {
+    tone(o, t, { type: 'sawtooth', f0: 220, f1: 55, ms: 320, vol: 0.3 });
+    noise(o, t, { ms: 380, vol: 0.45, f0: 900, f1: 120, filter: 'lowpass' });
+  } },
+  empty:     { gap: 200, play: (o, t) => { noise(o, t, { ms: 30, vol: 0.4, f0: 2500, q: 8 }); tone(o, t + 0.04, { f0: 140, ms: 60, vol: 0.12 }); } },
+  switch:    { play: (o, t) => { noise(o, t, { ms: 40, vol: 0.25, f0: 1800, q: 3 }); noise(o, t + 0.09, { ms: 40, vol: 0.3, f0: 1200, q: 3 }); } },
+  explosion: { gap: 50, play: (o, t) => {
+    noise(o, t, { ms: 750, vol: 0.9, f0: 1600, f1: 50, filter: 'lowpass', attack: 3 });
+    tone(o, t, { type: 'sine', f0: 120, f1: 30, ms: 550, vol: 0.7 });
+  } },
+  // Enemies: wake (spotted you), windup (about to attack), pain, die
+  printer_wake:   { gap: 400, play: (o, t) => { tone(o, t, { type: 'sawtooth', f0: 90, f1: 260, ms: 420, vol: 0.18 }); noise(o, t + 0.3, { ms: 80, vol: 0.25, f0: 2500, q: 4 }); } },
+  printer_windup: { gap: 100, play: (o, t) => tone(o, t, { type: 'sawtooth', f0: 140, f1: 520, ms: 480, vol: 0.2 }) },
+  printer_pain:   { gap: 120, play: (o, t) => noise(o, t, { ms: 120, vol: 0.35, f0: 3000, f1: 800, q: 1.5 }) },
+  printer_die:    { play: (o, t) => { tone(o, t, { f0: 300, f1: 40, ms: 700, vol: 0.2 }); noise(o, t, { ms: 500, vol: 0.4, f0: 2500, f1: 300 }); } },
+  router_wake:    { gap: 400, play: (o, t) => [1200, 1800, 1500].forEach((f, i) => tone(o, t + i * 0.07, { f0: f, ms: 60, vol: 0.1 })) },
+  router_windup:  { gap: 100, play: (o, t) => tone(o, t, { f0: 600, f1: 2000, ms: 500, vol: 0.1 }) },
+  router_pain:    { gap: 120, play: (o, t) => tone(o, t, { f0: 900, f1: 300, ms: 100, vol: 0.14 }) },
+  router_die:     { play: (o, t) => { tone(o, t, { f0: 1400, f1: 60, ms: 600, vol: 0.15 }); noise(o, t, { ms: 200, vol: 0.3, f0: 4000, q: 2 }); } },
+  shadow_wake:    { gap: 400, play: (o, t) => { noise(o, t, { ms: 600, vol: 0.35, f0: 300, f1: 1200, q: 6, attack: 60 }); tone(o, t, { type: 'sawtooth', f0: 55, f1: 45, ms: 600, vol: 0.2, attack: 60 }); } },
+  shadow_windup:  { gap: 100, play: (o, t) => noise(o, t, { ms: 220, vol: 0.35, f0: 400, f1: 3000, q: 3 }) },
+  shadow_pain:    { gap: 120, play: (o, t) => tone(o, t, { type: 'sawtooth', f0: 110, f1: 70, ms: 160, vol: 0.2 }) },
+  shadow_die:     { play: (o, t) => { noise(o, t, { ms: 800, vol: 0.4, f0: 2000, f1: 100, q: 4 }); tone(o, t, { type: 'sawtooth', f0: 80, f1: 30, ms: 800, vol: 0.25 }); } },
+  ink:   { gap: 60, play: (o, t) => noise(o, t, { ms: 160, vol: 0.4, f0: 1200, f1: 300, q: 1.2 }) },
+  splat: { gap: 60, play: (o, t) => noise(o, t, { ms: 120, vol: 0.3, f0: 500, f1: 200, filter: 'lowpass' }) },
+  burst: { gap: 60, play: (o, t) => { for (let i = 0; i < 3; i++) { noise(o, t + i * 0.07, { ms: 50, vol: 0.4, f0: 2500 }); tone(o, t + i * 0.07, { f0: 800, f1: 200, ms: 50, vol: 0.12 }); } } },
+  swipe: { gap: 60, play: (o, t) => noise(o, t, { ms: 200, vol: 0.5, f0: 600, f1: 4000, q: 2 }) },
+  // The DNS
+  dns_intro:  { play: (o, t) => {
+    [55, 58.3, 82.4].forEach(f => tone(o, t, { type: 'sawtooth', f0: f, f1: f * 0.7, ms: 2200, vol: 0.18, attack: 300 }));
+    noise(o, t, { ms: 1800, vol: 0.3, f0: 200, f1: 2000, q: 4, attack: 200 });
+  } },
+  dns_windup: { gap: 100, play: (o, t) => tone(o, t, { type: 'sawtooth', f0: 100, f1: 400, ms: 500, vol: 0.2 }) },
+  dns_pain:   { gap: 160, play: (o, t) => tone(o, t, { f0: 220, f1: 140, ms: 120, vol: 0.12 }) },
+  nx:         { gap: 80, play: (o, t) => { for (let i = 0; i < 4; i++) tone(o, t + i * 0.05, { f0: 2400 - i * 300, f1: 600, ms: 90, vol: 0.09 }); } },
+  phase:      { play: (o, t) => { for (let i = 0; i < 3; i++) { tone(o, t + i * 0.32, { f0: 880, ms: 140, vol: 0.12 }); tone(o, t + i * 0.32 + 0.15, { f0: 660, ms: 140, vol: 0.12 }); } } },
+  servfail:   { play: (o, t) => [220, 233, 311].forEach(f => tone(o, t, { type: 'sawtooth', f0: f, f1: f / 8, ms: 2600, vol: 0.14, attack: 20 })) },
+  // Player, pickups, doors
+  hurt:    { gap: 90, play: (o, t) => { tone(o, t, { type: 'sine', f0: 160, f1: 60, ms: 180, vol: 0.5 }); noise(o, t, { ms: 120, vol: 0.3, f0: 800, filter: 'lowpass' }); } },
+  death:   { play: (o, t) => { tone(o, t, { type: 'sine', f0: 400, f1: 50, ms: 1400, vol: 0.4 }); [196, 207.7].forEach(f => tone(o, t + 0.1, { f0: f, ms: 1200, vol: 0.08, attack: 40 })); } },
+  stamp:   { play: (o, t) => { noise(o, t, { ms: 200, vol: 0.8, f0: 400, f1: 80, filter: 'lowpass', attack: 1 }); tone(o, t, { type: 'sine', f0: 90, f1: 40, ms: 250, vol: 0.6 }); } },
+  ups:     { play: (o, t) => tone(o, t, { f0: 2000, ms: 90, vol: 0.05 }) }, // low-SLA warning, like a UPS on battery
+  pickup:  { play: (o, t) => { tone(o, t, { f0: 660, ms: 70, vol: 0.12 }); tone(o, t + 0.07, { f0: 990, ms: 90, vol: 0.12 }); } },
+  heal:    { play: (o, t) => [523, 659, 784].forEach((f, i) => tone(o, t + i * 0.06, { type: 'triangle', f0: f, ms: 140, vol: 0.22 })) },
+  weapon:  { play: (o, t) => [392, 523, 659, 784, 1047].forEach((f, i) => tone(o, t + i * 0.07, { f0: f, ms: 160, vol: 0.12 })) },
+  powerup: { play: (o, t) => tone(o, t, { type: 'sine', f0: 300, f1: 2400, ms: 500, vol: 0.2 }) },
+  flush:   { play: (o, t) => { noise(o, t, { ms: 900, vol: 0.5, f0: 300, f1: 5000, q: 2, attack: 50 }); tone(o, t, { type: 'sine', f0: 1800, f1: 200, ms: 900, vol: 0.15 }); } },
+  door:    { play: (o, t) => { noise(o, t, { ms: 500, vol: 0.35, f0: 2500, f1: 600, attack: 20 }); tone(o, t + 0.45, { f0: 120, ms: 80, vol: 0.15 }); } },
+  denied:  { gap: 300, play: (o, t) => { tone(o, t, { f0: 180, ms: 140, vol: 0.14 }); tone(o, t + 0.17, { f0: 140, ms: 220, vol: 0.14 }); } },
+  slam:    { play: (o, t) => { noise(o, t, { ms: 400, vol: 0.8, f0: 600, f1: 60, filter: 'lowpass', attack: 1 }); tone(o, t, { type: 'sine', f0: 70, f1: 35, ms: 500, vol: 0.6 }); } },
+  // Screens
+  start:   { play: (o, t) => [262, 330, 392, 523].forEach((f, i) => tone(o, t + i * 0.05, { f0: f, ms: 200, vol: 0.1 })) },
+  type:    { gap: 30, play: (o, t) => noise(o, t, { ms: 18, vol: 0.12, f0: 3500 + Math.random() * 1500, q: 6 }) },
+  victory: { play: (o, t) => [523, 659, 784, 1047].forEach((f, i) => tone(o, t + i * 0.09, { type: 'triangle', f0: f, ms: 1400 - i * 90, vol: 0.18, attack: 10 })) },
+};
+
+// Play a sound. With (x, y) it's positional: quieter with distance, muffled behind walls, panned left/right.
+function sfx(name, x, y) {
+  const c = audio.ctx, s = SFX[name];
+  if (!c || audio.muted || !s) return;
+  const now = performance.now();
+  if (s.gap && now - (audio.last[name] || 0) < s.gap) return;
+  audio.last[name] = now;
+  let out = audio.sfx;
+  if (x !== undefined) {
+    const rx = x - player.x, ry = y - player.y, d = Math.hypot(rx, ry);
+    if (d > 24) return;
+    const g = c.createGain();
+    g.gain.value = (hasLOS(player.x, player.y, x, y) ? 1 : 0.45) / (1 + d * 0.18);
+    out = g;
+    if (c.createStereoPanner && d > 0.3) {
+      const p = c.createStereoPanner();
+      p.pan.value = Math.max(-1, Math.min(1, (rx * player.planeX + ry * player.planeY) / (FOV_PLANE * d))) * 0.8;
+      g.connect(p).connect(audio.sfx);
+    } else g.connect(audio.sfx);
+  }
+  s.play(out, c.currentTime + 0.005);
+}
+
+// Voice lines (the player character). Each event lists [file, subtitle] variants, loaded from
+// sounds/voice/<file>.mp3 (or .wav). Missing files are skipped silently, so lines can be recorded a few at a time.
+//   chance   — how often the line plays when its event fires
+//   cooldown — minimum ms between two lines of this event
+//   priority — a higher-priority line interrupts a lower one; equal or lower waits its turn (is dropped)
+const VOICE_DIR  = 'sounds/voice/';
+const VOICE_EXTS = ['mp3', 'wav'];
+const SUBTITLES  = true;
+const VOICE = {
+  start:       { chance: 1,    cooldown: 0,     priority: 2, lines: [['start_1', "Another Monday. Let's see what's broken."], ['start_2', 'Okay. Who touched the DNS?']] },
+  ammo:        { chance: 0.5,  cooldown: 9000,  priority: 1, lines: [['ammo_1', 'Tickets. Great. More tickets.'], ['ammo_2', "Queue's full again."], ['ammo_3', 'Reloading the backlog.']] },
+  health:      { chance: 0.6,  cooldown: 9000,  priority: 1, lines: [['health_1', 'Ahh, coffee. SLA restored.'], ['health_2', 'Caffeine. The real uptime.'], ['health_3', "That's the good stuff."]] },
+  cannon:      { chance: 1,    cooldown: 0,     priority: 3, lines: [['cannon_1', "Closing Cannon. Now we're resolving tickets."]] },
+  flush_get:   { chance: 1,    cooldown: 0,     priority: 3, lines: [['flush_get_1', "Flush DNS cache. I'm gonna need that."]] },
+  flush_use:   { chance: 1,    cooldown: 0,     priority: 4, lines: [['flush_use_1', 'Flush THIS.'], ['flush_use_2', 'ipconfig, slash, flush... D-N-S.']] },
+  locked:      { chance: 1,    cooldown: 6000,  priority: 2, lines: [['locked_1', 'Access denied. Of course.'], ['locked_2', 'I need clearance. IT closet, probably.']] },
+  boss_intro:  { chance: 1,    cooldown: 0,     priority: 5, lines: [['boss_intro_1', "Of course. It's always DNS."]] },
+  boss_phase2: { chance: 1,    cooldown: 0,     priority: 4, lines: [['boss_phase2_1', 'Shadow IT? Who approved this?!']] },
+  boss_phase3: { chance: 1,    cooldown: 0,     priority: 4, lines: [['boss_phase3_1', "TTL's hitting zero. Now or never."]] },
+  hurt:        { chance: 0.35, cooldown: 1500,  priority: 0, lines: [['hurt_1', ''], ['hurt_2', ''], ['hurt_3', ''], ['hurt_4', '']] },
+  low_health:  { chance: 1,    cooldown: 20000, priority: 3, lines: [['low_health_1', 'I need coffee. Now.'], ['low_health_2', "SLA's about to breach..."]] },
+  empty:       { chance: 1,    cooldown: 5000,  priority: 2, lines: [['empty_1', 'Out of tickets!'], ['empty_2', "Queue's empty!"]] },
+  kill:        { chance: 0.15, cooldown: 10000, priority: 1, lines: [['kill_1', 'Ticket closed.'], ['kill_2', 'Resolved.'], ['kill_3', 'Marked as duplicate.']] },
+  death:       { chance: 1,    cooldown: 0,     priority: 9, lines: [['death_1', ''], ['death_2', '']] },
+  victory:     { chance: 1,    cooldown: 0,     priority: 9, lines: [['victory_1', "Resolved. It was DNS. ...It's always DNS."]] },
+};
+const voice = { el: null, priority: -1, last: {}, lastClip: null, sub: '', subUntil: 0 };
+
+// Try each extension in turn; a clip becomes playable once its file has loaded
+function loadClip(clip, exts) {
+  const el = new Audio();
+  el.preload = 'auto';
+  el.addEventListener('canplaythrough', () => { clip.el = el; }, { once: true });
+  el.addEventListener('error', () => { if (exts.length > 1) loadClip(clip, exts.slice(1)); }, { once: true });
+  el.src = VOICE_DIR + clip.file + '.' + exts[0];
+}
+for (const ev of Object.values(VOICE)) {
+  ev.clips = ev.lines.map(([file, text]) => ({ file, text, el: null }));
+  ev.clips.forEach(clip => loadClip(clip, VOICE_EXTS));
+}
+
+function stopVoice() {
+  if (voice.el) { voice.el.pause(); voice.el = null; }
+  voice.priority = -1;
+  voice.subUntil = 0;
+  if (audio.sfx) audio.sfx.gain.setTargetAtTime(1, audio.ctx.currentTime, 0.1);
+}
+
+// Fire a voice event; returns true if a line started
+function say(event) {
+  const ev = VOICE[event];
+  if (!ev || audio.muted) return false;
+  const now = performance.now();
+  if (now - (voice.last[event] ?? -Infinity) < ev.cooldown) return false;
+  const busy = voice.el && !voice.el.paused && !voice.el.ended;
+  if (busy && ev.priority <= voice.priority) return false;
+  const ready = ev.clips.filter(c => c.el);
+  if (!ready.length || Math.random() > ev.chance) return false;
+  // Don't repeat the previous variant back to back
+  const pool = ready.length > 1 ? ready.filter(c => c !== voice.lastClip) : ready;
+  const clip = pool[Math.random() * pool.length | 0];
+  if (busy) voice.el.pause();
+  voice.last[event] = now;
+  voice.lastClip = clip;
+  voice.el = clip.el;
+  voice.priority = ev.priority;
+  clip.el.currentTime = 0;
+  clip.el.onended = stopVoice;
+  clip.el.play().catch(() => {});
+  if (SUBTITLES && clip.text) {
+    voice.sub = clip.text;
+    voice.subUntil = now + (isFinite(clip.el.duration) ? clip.el.duration * 1000 : 2500) + 500;
+  } else voice.subUntil = 0;
+  if (audio.sfx) audio.sfx.gain.setTargetAtTime(0.55, audio.ctx.currentTime, 0.05); // duck effects under the voice
+  return true;
+}
 
 // --- Textures (procedural, drawn once into offscreen canvases) ---
 function makeTex(w, h, draw) {
@@ -554,27 +786,27 @@ const PICKUPS = {
     if (game.ammo >= game.maxAmmo) return false;
     game.ammo = Math.min(game.maxAmmo, game.ammo + k.amount);
     return `+${k.amount} TICKETS`;
-  } },
+  }, sound: 'pickup', voice: 'ammo' },
   coffee:   { tex: TEX.coffee,   scale: 0.14, apply: () => {
     if (game.health >= game.maxHealth) return false;
     game.health = Math.min(game.maxHealth, game.health + 20);
     return 'COFFEE  +20 SLA';
-  } },
+  }, sound: 'heal', voice: 'health' },
   closures: { tex: TEX.closures, scale: 0.14, apply: () => {
     if (game.cannonAmmo >= game.maxCannonAmmo) return false;
     game.cannonAmmo = Math.min(game.maxCannonAmmo, game.cannonAmmo + 3);
     return '+3 CLOSURES';
-  } },
+  }, sound: 'pickup', voice: 'ammo' },
   cannon:   { tex: TEX.cannon,   scale: 0.18, apply: () => {
     game.hasCannon  = true;
     game.cannonAmmo = Math.min(game.maxCannonAmmo, game.cannonAmmo + 5);
     switchWeapon('cannon');
     return 'CLOSING CANNON ACQUIRED  —  SERVER ROOM UNLOCKED';
-  } },
+  }, sound: 'weapon', voice: 'cannon' },
   flush:    { tex: TEX.flush,    scale: 0.16, apply: () => {
     game.flushes++;
     return 'FLUSH DNS CACHE  —  PRESS [F] TO STUN THE DNS';
-  } },
+  }, sound: 'powerup', voice: 'flush_get' },
 };
 
 function spawnEnemy(type, x, y) {
@@ -606,6 +838,7 @@ function wake(e, now) {
   if (e.state !== 'idle') return;
   e.state = 'chase';
   e.nextAttackAt = now + 400 + Math.random() * 600;
+  sfx(e.type + '_wake', e.x, e.y);
 }
 
 // Returns true if this hit killed the enemy
@@ -614,13 +847,15 @@ function damageEnemy(e, dmg, now) {
   e.hp -= Math.round(dmg);
   e.hitUntil = now + 90;
   if (e.type === 'dns') {
-    if (e.hp > 0) return false;
+    if (e.hp > 0) { sfx('dns_pain', e.x, e.y); return false; }
     bossDie(e, now);
     return true;
   }
   if (e.hp <= 0) {
     e.state = 'dead';
     game.kills++;
+    sfx(e.type + '_die', e.x, e.y);
+    say('kill');
     if (e.bossAdd) {
       // Boss adds always pay out, so the fight keeps you supplied
       if (Math.random() < 0.35) pickups.push({ kind: 'closures', x: e.x, y: e.y });
@@ -631,6 +866,7 @@ function damageEnemy(e, dmg, now) {
     return true;
   }
   wake(e, now);
+  sfx(e.type + '_pain', e.x, e.y);
   if (Math.random() < e.def.painChance) {
     e.state = 'pain';
     e.painUntil = now + 220;
@@ -648,16 +884,30 @@ function alertEnemies(now) {
 }
 
 // (srcX, srcY) = where the damage came from, for the on-screen direction indicator
-function hurtPlayer(dmg, srcX, srcY) {
+// cause = enemy type or 'self', named on the death screen
+const LOW_HEALTH = 25;
+function hurtPlayer(dmg, srcX, srcY, cause) {
   if (game.over || game.won || dmg <= 0) return;
+  const before = game.health;
   game.health = Math.max(0, game.health - dmg);
   game.hurt  = 1;
   game.shake = Math.max(game.shake, Math.min(12, 3 + dmg * 0.4));
   if (srcX !== undefined) damageDirs.push({ x: srcX, y: srcY, t0: performance.now() });
   if (game.health === 0) {
+    const now = performance.now();
     game.over = true;
+    game.overAt = game.endAt = now;
+    game.killedBy = cause;
+    game.ticketNo = 100000 + (Math.random() * 900000 | 0);
+    game.resolution = RESOLUTIONS[Math.random() * RESOLUTIONS.length | 0];
     if (document.pointerLockElement) document.exitPointerLock();
+    sfx('death');
+    setTimeout(() => say('death'), 250);
+    return;
   }
+  sfx('hurt');
+  if (before > LOW_HEALTH && game.health <= LOW_HEALTH) say('low_health');
+  else say('hurt');
 }
 
 function showMessage(text, ms = 2200) {
@@ -670,11 +920,13 @@ function enemyAttack(e, dist) {
   if (!e.sees) return; // lost sight during windup
   const now = performance.now();
   if (d.meleeDmg && dist <= d.meleeRange) {
-    hurtPlayer(Math.round(d.meleeDmg * (0.8 + Math.random() * 0.4)), e.x, e.y);
+    sfx('swipe', e.x, e.y);
+    hurtPlayer(Math.round(d.meleeDmg * (0.8 + Math.random() * 0.4)), e.x, e.y, e.type);
     return;
   }
   // Muzzle flash on the attacker so you can see who's shooting
   addEffect(e.x, e.y, d.scale * 0.25, ATTACK_FLASH_TEX[e.type], d.scale * 0.8, 160, 0);
+  sfx(d.ranged, e.x, e.y);
   if (d.ranged === 'ink') {
     const dx = (player.x - e.x) / dist, dy = (player.y - e.y) / dist;
     projectiles.push({ kind: 'ink', x: e.x + dx * 0.4, y: e.y + dy * 0.4, dx: dx * INK_SPEED, dy: dy * INK_SPEED, dmg: INK_DMG, sx: e.x, sy: e.y, age: 0 });
@@ -688,7 +940,7 @@ function enemyAttack(e, dist) {
       const mx = player.x + Math.cos(a) * r, my = player.y + Math.sin(a) * r;
       if (!isWall(mx, my)) addEffect(mx, my, Math.random() * 0.3, TEX.spark, 0.08, 220, 0.05);
     }
-    if (dmg) hurtPlayer(dmg, e.x, e.y);
+    if (dmg) hurtPlayer(dmg, e.x, e.y, e.type);
   }
 }
 
@@ -766,6 +1018,7 @@ function updateEnemies(now) {
         if (e.sees && dist <= e.def.attackRange && now >= e.nextAttackAt) {
           e.state = 'windup';
           e.windupUntil = now + e.def.windupMs;
+          sfx(e.type + '_windup', e.x, e.y);
         } else if (dist > e.def.stopDist) {
           stepToward(e);
         }
@@ -822,12 +1075,15 @@ function updateBoss(e, now) {
     e.z = Math.max(0, e.z - 0.004);
     if (now < e.deathAt + BOSS_DEATH_MS) {
       if (now >= e.nextBoomAt) {
-        explosions.push({ x: e.x + (Math.random() - 0.5) * 1.4, y: e.y + (Math.random() - 0.5) * 1.4, t0: now });
+        const bx = e.x + (Math.random() - 0.5) * 1.4, by = e.y + (Math.random() - 0.5) * 1.4;
+        explosions.push({ x: bx, y: by, t0: now });
+        sfx('explosion', bx, by);
         game.shake = Math.max(game.shake, 6);
         e.nextBoomAt = now + 110;
       }
     } else if (!game.won) {
       game.won = true;
+      game.wonAt = now;
       if (document.pointerLockElement) document.exitPointerLock();
     }
     return;
@@ -840,6 +1096,8 @@ function updateBoss(e, now) {
     e.nextSpawnAt = now + 1200;
     showMessage(phase === 2 ? 'QUERY FLOOD  —  SHADOW IT INBOUND' : 'TTL 0  —  CACHE POISONED', 3000);
     game.shake = Math.max(game.shake, 8);
+    sfx('phase');
+    say(phase === 2 ? 'boss_phase2' : 'boss_phase3');
   }
   if (now < e.stunnedUntil) return;
   const P = BOSS_PHASES[e.phase];
@@ -866,6 +1124,7 @@ function updateBoss(e, now) {
     if (now >= e.nextAttackAt && hasLOS(e.x, e.y, player.x, player.y)) {
       e.state = 'windup';
       e.windupUntil = now + P.windupMs;
+      sfx('dns_windup', e.x, e.y);
     }
   }
 
@@ -892,6 +1151,7 @@ function fireVolley(e, P) {
                        speed: P.nxSpeed, dmg: NX_DMG, sx: e.x, sy: e.y, age: 0 });
   }
   addEffect(e.x, e.y, e.z + 0.2, TEX.nxGlow, 0.9, 220, 0);
+  sfx('nx', e.x, e.y);
 }
 
 function bossDie(e, now) {
@@ -900,6 +1160,8 @@ function bossDie(e, now) {
   e.deathAt = now;
   e.nextBoomAt = now;
   game.kills++;
+  game.endAt = now;
+  sfx('servfail');
   game.msgUntil = 0; // SERVFAIL gets the whole screen (drawServfail)
   // Its adds and queries die with it
   for (const a of enemies) if (a.bossAdd && a.state !== 'dead') { a.state = 'dead'; game.kills++; }
@@ -910,18 +1172,21 @@ function bossDie(e, now) {
 function useFlush() {
   if (game.over || game.won || game.flushes <= 0) return;
   const boss = game.boss;
-  if (!boss || boss.state === 'dead') { showMessage('NOTHING TO FLUSH  —  SAVE IT FOR THE DNS'); return; }
+  if (!boss || boss.state === 'dead') { showMessage('NOTHING TO FLUSH  —  SAVE IT FOR THE DNS'); sfx('denied'); return; }
   game.flushes--;
   boss.stunnedUntil = performance.now() + STUN_MS;
   boss.state = 'float';
   for (let i = projectiles.length - 1; i >= 0; i--) if (projectiles[i].kind === 'nx') projectiles.splice(i, 1);
   game.cyanFlash = 1;
   showMessage('ipconfig /flushdns  —  THE DNS IS STUNNED', 2500);
+  sfx('flush');
+  say('flush_use');
 }
 
 // Splash damage with linear falloff; walls block it. The player takes a reduced share.
 function explode(x, y, now) {
   explosions.push({ x, y, t0: now });
+  sfx('explosion', x, y);
   for (const e of enemies) {
     if (e.state === 'dead') continue;
     // The boss is big: measure splash to its surface, not its center
@@ -930,7 +1195,7 @@ function explode(x, y, now) {
   }
   const pd = Math.hypot(player.x - x, player.y - y);
   if (pd < SPLASH_RADIUS && hasLOS(x, y, player.x, player.y)) {
-    hurtPlayer(Math.round(SPLASH_DMG * (1 - pd / SPLASH_RADIUS) * SELF_DMG_MULT), x, y);
+    hurtPlayer(Math.round(SPLASH_DMG * (1 - pd / SPLASH_RADIUS) * SELF_DMG_MULT), x, y, 'self');
   }
   if (pd < 7) game.shake = Math.max(game.shake, 10 * (1 - pd / 7));
   alertEnemies(now);
@@ -964,7 +1229,7 @@ function updateProjectiles(now) {
         addEffect(p.x, p.y, 0.25, TEX.nxGlow, 0.35, 260, 0);
         projectiles.splice(i, 1);
       } else if (Math.hypot(player.x - p.x, player.y - p.y) < 0.4) {
-        hurtPlayer(p.dmg, p.sx, p.sy);
+        hurtPlayer(p.dmg, p.sx, p.sy, 'dns');
         projectiles.splice(i, 1);
       }
       continue;
@@ -973,11 +1238,12 @@ function updateProjectiles(now) {
     if (++p.age % 3 === 0) addEffect(p.x, p.y, 0.26, TEX.inkTrail, 0.12, 260, 0.02);
     if (isWall(p.x, p.y)) {
       addEffect(p.x - p.dx, p.y - p.dy, 0.2, TEX.inkSplat, 0.3, 300, 0);
+      sfx('splat', p.x - p.dx, p.y - p.dy);
       projectiles.splice(i, 1);
       continue;
     }
     if (Math.hypot(player.x - p.x, player.y - p.y) < 0.35) {
-      hurtPlayer(p.dmg, p.sx, p.sy);
+      hurtPlayer(p.dmg, p.sx, p.sy, 'printer');
       projectiles.splice(i, 1);
     }
   }
@@ -998,10 +1264,13 @@ function updatePickups() {
   for (let i = pickups.length - 1; i >= 0; i--) {
     const k = pickups[i];
     if (Math.hypot(player.x - k.x, player.y - k.y) >= 0.5) continue;
-    const msg = PICKUPS[k.kind].apply(k);
+    const def = PICKUPS[k.kind];
+    const msg = def.apply(k);
     if (!msg) continue;
     game.pickup = 1;
     showMessage(msg);
+    sfx(def.sound);
+    say(def.voice);
     pickups.splice(i, 1);
   }
 }
@@ -1029,11 +1298,14 @@ function useAction() {
   if (!d || game.over) return;
   if (doorLocked(d.type)) {
     showMessage(d.type === SECURITY_DOOR ? 'ACCESS DENIED  —  CLEARANCE IS IN THE IT CLOSET' : 'LOCKED  —  RESOLVE THE DNS FIRST');
+    sfx('denied');
+    say('locked');
     return;
   }
   MAP[d.y][d.x] = 0;
   flowCell = -1;
   showMessage('ACCESS GRANTED');
+  sfx('door', d.x + 0.5, d.y + 0.5);
 }
 
 // Arena cells: flood fill from just inside the boss door (the closed door bounds it)
@@ -1061,6 +1333,7 @@ function checkBossTrigger() {
   }
   MAP[BOSS_DOOR.y][BOSS_DOOR.x] = DOOR;
   flowCell = -1;
+  sfx('slam');
   startBossFight();
 }
 
@@ -1082,6 +1355,8 @@ function startBossFight() {
   addEffect(boss.x, boss.y, 0.2, TEX.nxGlow, 1.6, 700, 0);
   game.shake = 8;
   showMessage('THE DOOR SEALS BEHIND YOU.  THE DNS IS RESOLVING...', 3500);
+  sfx('dns_intro');
+  setTimeout(() => say('boss_intro'), 700);
 }
 
 // --- Weapons ---
@@ -1089,12 +1364,36 @@ function switchWeapon(name) {
   if (game.over || (name === 'cannon' && !game.hasCannon)) return;
   if (name === (weapon.next || game.weapon)) return;
   weapon.next = name === game.weapon ? null : name; // switching back mid-swap cancels it
+  sfx('switch');
   if (weapon.state === 'idle') { weapon.state = 'lowering'; weapon.switchAt = performance.now(); }
   // otherwise the switch starts as soon as the current shot finishes cooling
 }
 
 function cycleWeapon() {
   switchWeapon((weapon.next || game.weapon) === 'keyboard' ? 'cannon' : 'keyboard');
+}
+
+// --- Title / restart ---
+// quiet = restarting from R: no gesture yet, so no start jingle (audio resumes on the next key/click)
+function startGame(quiet) {
+  if (game.started) return;
+  game.started = true;
+  game.startAt = performance.now();
+  Object.assign(player, { dirX: 1, dirY: 0, planeX: 0, planeY: FOV_PLANE }); // undo the title screen's slow pan
+  if (quiet) return;
+  ensureAudio();
+  sfx('start');
+  setTimeout(() => say('start'), 500);
+}
+
+// R on the death/victory screen: reload the page and skip the title
+function canRestart() {
+  const now = performance.now();
+  return (game.over && now - game.overAt > STAMP_AT) || (game.won && now - game.wonAt > VICTORY_BANNER_AT);
+}
+function restart() {
+  try { sessionStorage.setItem('dnsSkipTitle', '1'); } catch (e) {}
+  location.reload();
 }
 
 // Input
@@ -1104,6 +1403,9 @@ document.addEventListener('keyup',   e => { keys[e.code] = false; });
 
 let showMap = true;
 document.addEventListener('keydown', e => {
+  ensureAudio();
+  if (e.code === 'KeyN') { toggleMute(); return; }
+  if (!game.started) { if (!e.repeat) startGame(); return; } // any key starts
   if (e.code === 'KeyM') showMap = !showMap;
   if (e.code === 'Space') shoot();
   if (e.code === 'Digit1') switchWeapon('keyboard');
@@ -1111,14 +1413,16 @@ document.addEventListener('keydown', e => {
   if (e.code === 'KeyQ') cycleWeapon();
   if (e.code === 'KeyE') useAction();
   if (e.code === 'KeyF') useFlush();
-  if (e.code === 'KeyR' && (game.over || game.won)) location.reload();
+  if (e.code === 'KeyR' && canRestart()) restart();
 });
 canvas.addEventListener('wheel', e => { e.preventDefault(); cycleWeapon(); }, { passive: false });
 
 // Pointer lock — left-click acquires lock; once locked, fires weapon
 let mouseDX = 0;
 canvas.addEventListener('mousedown', e => {
+  ensureAudio();
   if (e.button !== 0 || game.over || game.won) return;
+  if (!game.started) startGame();
   if (document.pointerLockElement !== canvas) canvas.requestPointerLock()?.catch?.(() => {}); // embedded previews may refuse
   else shoot();
 });
@@ -1129,9 +1433,11 @@ document.addEventListener('mousemove', e => {
 // --- Shoot ---
 function shoot() {
   const w = WEAPONS[game.weapon];
-  if (game.over || game.won || weapon.state !== 'idle' || game[w.ammo] <= 0) return;
+  if (game.over || game.won || weapon.state !== 'idle') return;
+  if (game[w.ammo] <= 0) { sfx('empty'); say('empty'); return; } // Chunk 7: louder empty alert + auto-switch
   const now = performance.now();
   game[w.ammo]--;
+  sfx(game.weapon);
   weapon.state  = 'firing';
   weapon.fireAt = now;
   weapon.kickY  = 0;
@@ -1272,9 +1578,20 @@ function update() {
   game.cyanFlash = Math.max(0, game.cyanFlash - 0.03);
   game.hitMarker = Math.max(0, game.hitMarker - 0.06);
   game.shake     = game.shake < 0.3 ? 0 : game.shake * 0.82;
-  updateEffects(performance.now());
-  if (game.over) return;
-  if (game.won) return;
+  const t0 = performance.now();
+  updateEffects(t0);
+  if (!game.started) { rotate(0.0025); return; } // title screen: slow pan around the office
+  if (game.over) {
+    if (!game.stamped && t0 - game.overAt >= STAMP_AT) { game.stamped = true; game.shake = 10; sfx('stamp'); }
+    return;
+  }
+  if (game.won) {
+    const typed = victoryTyped(t0 - game.wonAt);
+    if (typed > game.typed) { game.typed = typed; sfx('type'); }
+    if (!game.bannerShown && t0 - game.wonAt >= VICTORY_BANNER_AT) { game.bannerShown = true; sfx('victory'); say('victory'); }
+    return;
+  }
+  if (game.health <= LOW_HEALTH && t0 >= audio.upsAt) { sfx('ups'); audio.upsAt = t0 + 1400; }
 
   // Rotation (positive angle turns right: screen-right is the +plane side)
   const turn = (keys['ArrowRight'] ? ROT_SPEED : 0)
@@ -1345,16 +1662,25 @@ function update() {
 // --- Render ---
 function render() {
   // Screen shake offsets the 3D view and weapon; HUD stays put
+  ctx.fillStyle = '#000';
+  ctx.fillRect(0, 0, SCREEN_W, SCREEN_H);
   ctx.save();
   if (game.shake) ctx.translate((Math.random() * 2 - 1) * game.shake, (Math.random() * 2 - 1) * game.shake);
+  if (game.over) {
+    // Death: the view slumps sideways toward the floor
+    const t = Math.min(1, (performance.now() - game.overAt) / 900), k = t * t * (3 - 2 * t);
+    ctx.translate(SCREEN_W / 2, HALF_H + k * 80);
+    ctx.rotate(k * 0.16);
+    ctx.translate(-SCREEN_W / 2, -HALF_H);
+  }
 
-  // Ceiling (overdrawn past the edges so shake never shows stale pixels)
+  // Ceiling (overdrawn past the edges so shake and the death slump never show stale pixels)
   ctx.fillStyle = '#1a1a2e';
-  ctx.fillRect(-16, -16, SCREEN_W + 32, HALF_H + 16);
+  ctx.fillRect(-200, -200, SCREEN_W + 400, HALF_H + 200);
 
   // Floor — slightly lighter, carpet feel
   ctx.fillStyle = '#282018';
-  ctx.fillRect(-16, HALF_H, SCREEN_W + 32, HALF_H + 16);
+  ctx.fillRect(-200, HALF_H, SCREEN_W + 400, HALF_H + 200);
 
   // Cast one ray per screen column
   for (let x = 0; x < SCREEN_W; x++) {
@@ -1376,20 +1702,122 @@ function render() {
 
   drawSprites();
 
+  if (!game.started) {
+    ctx.restore();
+    drawTitle();
+    drawSubtitles();
+    return;
+  }
+
   // Weapon + HUD + minimap (drawn in order so minimap is on top)
-  drawWeapon();
+  if (!game.over) drawWeapon();
   drawKeycaps();
   ctx.restore();
   drawScreenFlash();
-  if (game.boss && game.boss.phase === 3 && game.boss.state !== 'dead') drawGlitch();
-  drawCrosshair();
-  drawDamageDirs();
-  drawHUD();
-  drawBossBar();
-  if (showMap) drawMinimap();
-  if (game.boss && game.boss.state === 'dead' && !game.won) drawServfail();
-  if (game.over) drawDeathOverlay();
-  if (game.won) drawVictoryOverlay();
+  if (game.over) {
+    drawDeathOverlay();
+  } else if (game.won) {
+    drawVictoryOverlay();
+  } else {
+    if (game.boss && game.boss.phase === 3 && game.boss.state !== 'dead') drawGlitch();
+    drawCrosshair();
+    drawDamageDirs();
+    drawHUD();
+    drawBossBar();
+    if (showMap) drawMinimap();
+    if (game.boss && game.boss.state === 'dead') drawServfail();
+  }
+  drawSubtitles();
+}
+
+// Voice-line subtitle, bottom center (above the HUD bar in play)
+function drawSubtitles() {
+  if (performance.now() >= voice.subUntil) return;
+  const y = game.started && !game.over && !game.won ? SCREEN_H - 58 : SCREEN_H - 22;
+  ctx.font = 'italic 13px monospace';
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  const w = ctx.measureText(voice.sub).width;
+  ctx.fillStyle = 'rgba(0,0,0,0.7)';
+  ctx.fillRect(SCREEN_W / 2 - w / 2 - 10, y - 11, w + 20, 22);
+  ctx.fillStyle = '#ffe9a8';
+  ctx.fillText(voice.sub, SCREEN_W / 2, y);
+  ctx.textAlign = 'left';
+  ctx.textBaseline = 'alphabetic';
+}
+
+function drawTitle() {
+  const now = performance.now(), cx = SCREEN_W / 2;
+  ctx.fillStyle = 'rgba(0,0,0,0.62)';
+  ctx.fillRect(0, 0, SCREEN_W, SCREEN_H);
+  ctx.fillStyle = 'rgba(0,0,0,0.25)'; // scanlines
+  for (let y = 0; y < SCREEN_H; y += 3) ctx.fillRect(0, y, SCREEN_W, 1);
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+
+  // Title with an RGB split that jitters now and then
+  ctx.font = 'bold 22px monospace';
+  ctx.fillStyle = '#9a40ff';
+  ctx.fillText('D N S :', cx, 82);
+  const g = Math.random() < 0.06 ? (Math.random() - 0.5) * 12 : 0;
+  ctx.font = 'bold 58px monospace';
+  ctx.fillStyle = 'rgba(255,40,80,0.8)';
+  ctx.fillText('THE RECKONING', cx - 3 + g, 130);
+  ctx.fillStyle = 'rgba(60,230,255,0.8)';
+  ctx.fillText('THE RECKONING', cx + 3 - g, 130);
+  ctx.fillStyle = '#f0f0f0';
+  ctx.fillText('THE RECKONING', cx, 130);
+  ctx.font = 'italic 14px monospace';
+  ctx.fillStyle = '#a090c0';
+  ctx.fillText("It's always DNS.", cx, 172);
+
+  // Terminal teaser
+  const TX = cx - 230, TY = 198;
+  ctx.fillStyle = 'rgba(0,10,4,0.85)';
+  ctx.fillRect(TX, TY, 460, 66);
+  ctx.strokeStyle = '#1d4a2a';
+  ctx.lineWidth = 1;
+  ctx.strokeRect(TX + 0.5, TY + 0.5, 459, 65);
+  ctx.textAlign = 'left';
+  ctx.font = '12px monospace';
+  ctx.fillStyle = '#e8e8e8';
+  ctx.fillText('C:\\> nslookup intranet.corp', TX + 12, TY + 15);
+  ctx.fillStyle = '#ff5060';
+  ctx.fillText(';; connection timed out; no servers could be reached', TX + 12, TY + 33);
+  ctx.fillStyle = '#e8e8e8';
+  ctx.fillText('C:\\> ' + ((now / 500 | 0) % 2 ? '_' : ''), TX + 12, TY + 51);
+
+  // Controls
+  const CONTROLS = [
+    ['WASD', 'move',          'CLICK / SPACE', 'fire'],
+    ['← → / MOUSE', 'turn',   '1 / 2 / Q / WHEEL', 'switch weapon'],
+    ['E', 'open doors',       'F', 'flush DNS cache'],
+    ['M', 'map',              'N', 'sound on/off'],
+  ];
+  ctx.font = '11px monospace';
+  CONTROLS.forEach(([k1, a1, k2, a2], i) => {
+    const y = 296 + i * 18;
+    ctx.textAlign = 'right';
+    ctx.fillStyle = '#3dff73';
+    ctx.fillText(k1, cx - 150, y);
+    ctx.fillText(k2, cx + 110, y);
+    ctx.textAlign = 'left';
+    ctx.fillStyle = '#9a9a9a';
+    ctx.fillText(a1, cx - 140, y);
+    ctx.fillText(a2, cx + 120, y);
+  });
+
+  ctx.textAlign = 'center';
+  if ((now / 450 | 0) % 2 === 0) {
+    ctx.font = 'bold 18px monospace';
+    ctx.fillStyle = '#3dff73';
+    ctx.fillText('PRESS ANY KEY TO START', cx, 400);
+  }
+  ctx.font = '10px monospace';
+  ctx.fillStyle = '#666';
+  ctx.fillText(`click the screen to capture the mouse   ·   sound ${audio.muted ? 'OFF' : 'ON'} [N]`, cx, 432);
+  ctx.textAlign = 'left';
+  ctx.textBaseline = 'alphabetic';
 }
 
 // TTL 0: random dark flickers and horizontal glitch tears
@@ -1752,19 +2180,111 @@ function drawServfail() {
   ctx.textBaseline = 'alphabetic';
 }
 
-// Placeholder victory screen — full version comes in Chunk 6
+function fmtTime(ms) {
+  const s = Math.max(0, ms / 1000 | 0);
+  return `${s / 60 | 0}:${String(s % 60).padStart(2, '0')}`;
+}
+
+// --- Victory screen: a terminal finally resolves, then the banner and stats ---
+// Commands are typed out (typed = 1); their output appears at once
+const VICTORY_TERM = [
+  ['C:\\> ipconfig /flushdns', 1],
+  ['Successfully flushed the DNS Resolver Cache.', 0],
+  ['C:\\> nslookup intranet.corp', 1],
+  ['Server:   dns01.corp', 0],
+  ['Address:  10.0.0.53', 0],
+  ['Name:     intranet.corp', 0],
+  ['Address:  10.0.4.20', 0],
+  ['C:\\> ping -n 1 intranet.corp', 1],
+  ['Reply from 10.0.4.20: bytes=32 time<1ms TTL=128', 0],
+];
+const VICTORY_FADE_MS = 700;
+const VICTORY_CPS     = 40; // typing speed
+let victoryT = VICTORY_FADE_MS;
+const VICTORY_SCHED = VICTORY_TERM.map(([text, typed]) => {
+  const s = { text, typed, at: victoryT, dur: typed ? text.length * 1000 / VICTORY_CPS : 0 };
+  victoryT += s.dur + (typed ? 250 : 110);
+  return s;
+});
+const VICTORY_BANNER_AT = victoryT + 300; // ms after the win
+
+// Characters shown of line s at time t (ms since the win)
+function victoryLineChars(s, t) {
+  if (t < s.at) return 0;
+  return s.typed ? Math.min(s.text.length, Math.floor((t - s.at) / s.dur * s.text.length)) : s.text.length;
+}
+function victoryTyped(t) {
+  return VICTORY_SCHED.reduce((n, s) => n + (s.typed ? victoryLineChars(s, t) : 0), 0);
+}
+
+function victoryRank() {
+  const mins = (game.endAt - game.startAt) / 60000;
+  const score = game.health + Math.max(0, 12 - mins) * 8;
+  return score >= 150 ? 'NETWORK ARCHITECT' : score >= 100 ? 'SENIOR SYSADMIN' : score >= 60 ? 'TIER 2 SUPPORT' : 'HELPDESK INTERN';
+}
+
 function drawVictoryOverlay() {
-  ctx.fillStyle = 'rgba(0,30,20,0.75)';
+  const now = performance.now(), t = now - game.wonAt, cx = SCREEN_W / 2;
+  ctx.fillStyle = `rgba(0,8,4,${Math.min(0.94, t / VICTORY_FADE_MS * 0.94)})`;
   ctx.fillRect(0, 0, SCREEN_W, SCREEN_H);
-  ctx.textAlign = 'center';
   ctx.textBaseline = 'middle';
-  ctx.fillStyle = '#3dff73';
-  ctx.font = 'bold 30px monospace';
-  ctx.fillText('CONNECTION ESTABLISHED.', SCREEN_W / 2, HALF_H - 24);
-  ctx.fillStyle = '#ccc';
+  ctx.textAlign = 'left';
   ctx.font = '13px monospace';
-  ctx.fillText(`TICKETS CLOSED: ${game.kills}`, SCREEN_W / 2, HALF_H + 14);
-  ctx.fillText('Press R to play again', SCREEN_W / 2, HALF_H + 38);
+  const X = 170, Y = 52;
+  let cursor = null;
+  VICTORY_SCHED.forEach((s, i) => {
+    const n = victoryLineChars(s, t);
+    if (!n) return;
+    ctx.fillStyle = s.typed ? '#e8e8e8' : '#3dff73';
+    ctx.fillText(s.text.slice(0, n), X, Y + i * 18);
+    if (s.typed) cursor = [X + ctx.measureText(s.text.slice(0, n)).width + 2, Y + i * 18];
+  });
+  if (cursor && t < VICTORY_BANNER_AT && (now / 400 | 0) % 2) {
+    ctx.fillStyle = '#e8e8e8';
+    ctx.fillRect(cursor[0], cursor[1] - 7, 8, 14);
+  }
+
+  ctx.textAlign = 'center';
+  if (t >= VICTORY_BANNER_AT) {
+    const k = Math.min(1, (t - VICTORY_BANNER_AT) / 250);
+    ctx.save();
+    ctx.globalAlpha = k;
+    ctx.shadowColor = '#3dff73';
+    ctx.shadowBlur = 18;
+    ctx.font = 'bold 34px monospace';
+    ctx.fillStyle = '#3dff73';
+    ctx.fillText('CONNECTION ESTABLISHED.', cx, 246);
+    ctx.restore();
+  }
+  if (t >= VICTORY_BANNER_AT + 700) {
+    const rows = [
+      ['TICKETS CLOSED',  `${game.kills}`],
+      ['TIME TO RESOLVE', fmtTime(game.endAt - game.startAt)],
+      ['SLA REMAINING',   `${game.health}%`],
+      ['RANK',            victoryRank()],
+    ];
+    ctx.font = 'bold 12px monospace';
+    rows.forEach(([k, v], i) => {
+      const y = 292 + i * 22;
+      ctx.textAlign = 'right';
+      ctx.fillStyle = '#6a8a72';
+      ctx.fillText(k, cx - 12, y);
+      ctx.textAlign = 'left';
+      ctx.fillStyle = i === 3 ? '#ffe9a8' : '#e8e8e8';
+      ctx.fillText(v, cx + 12, y);
+    });
+  }
+  if (t >= VICTORY_BANNER_AT + 1400) {
+    ctx.textAlign = 'center';
+    ctx.font = 'italic 13px monospace';
+    ctx.fillStyle = '#a090c0';
+    ctx.fillText("It was DNS. It's always DNS.", cx, 398);
+    if ((now / 500 | 0) % 2 === 0) {
+      ctx.font = 'bold 13px monospace';
+      ctx.fillStyle = '#ccc';
+      ctx.fillText('PRESS  R  TO PLAY AGAIN', cx, 436);
+    }
+  }
   ctx.textAlign = 'left';
   ctx.textBaseline = 'alphabetic';
 }
@@ -1906,18 +2426,94 @@ function drawMinimap() {
   ctx.globalAlpha = 1;
 }
 
-// Placeholder death screen — full version comes in Chunk 6
+// --- Death screen: your own helpdesk ticket, stamped CLOSED ---
+const STAMP_AT = 1300; // ms after death when the stamp lands (R works after this)
+const DEATH_CAUSES = {
+  printer: 'PRINTER  (PC LOAD LETTER)',
+  router:  'ROGUE ROUTER  (PACKET STORM)',
+  shadow:  'SHADOW IT  (UNAPPROVED SOFTWARE)',
+  dns:     'THE DNS  (NXDOMAIN)',
+  self:    'YOUR OWN CLOSING CANNON',
+};
+const RESOLUTIONS = [
+  'Closed — user unresponsive.',
+  'Closed — could not reproduce.',
+  'Closed — working as intended.',
+  'Closed — tried turning it off and on.',
+  'Closed — duplicate of known issue.',
+];
+
 function drawDeathOverlay() {
-  ctx.fillStyle = 'rgba(60,0,0,0.6)';
+  const now = performance.now(), t = now - game.overAt, cx = SCREEN_W / 2;
+  ctx.fillStyle = `rgba(40,0,0,${0.35 + Math.min(1, t / 900) * 0.4})`;
   ctx.fillRect(0, 0, SCREEN_W, SCREEN_H);
-  ctx.textAlign = 'center';
+  if (t < 500) return;
   ctx.textBaseline = 'middle';
+  ctx.globalAlpha = Math.min(1, (t - 500) / 300);
+  ctx.textAlign = 'center';
+  ctx.font = 'bold 26px monospace';
   ctx.fillStyle = '#ff4040';
-  ctx.font = 'bold 28px monospace';
-  ctx.fillText('YOUR TICKET HAS BEEN CLOSED', SCREEN_W / 2, HALF_H - 14);
-  ctx.fillStyle = '#ccc';
+  ctx.fillText('YOU GOT A TICKET CLOSED ON YOU.', cx, 88);
+
+  // The ticket
+  const W = 500, H = 206, X = cx - W / 2, Y = 124;
+  ctx.fillStyle = 'rgba(16,8,8,0.94)';
+  ctx.fillRect(X, Y, W, H);
+  ctx.fillStyle = '#3a1010';
+  ctx.fillRect(X, Y, W, 26);
+  ctx.strokeStyle = '#6a2020';
+  ctx.lineWidth = 2;
+  ctx.strokeRect(X, Y, W, H);
+  ctx.font = 'bold 12px monospace';
+  ctx.textAlign = 'left';
+  ctx.fillStyle = '#ffb0b0';
+  ctx.fillText(`HELPDESK TICKET  #INC${game.ticketNo}`, X + 12, Y + 13);
+  ctx.textAlign = 'right';
+  ctx.fillStyle = '#ff5050';
+  ctx.fillText('PRIORITY: P1', X + W - 12, Y + 13);
+  const rows = [
+    ['SUBJECT',        'Technician not responding'],
+    ['ASSIGNED TO',    'You'],
+    ['CAUSE',          DEATH_CAUSES[game.killedBy] || 'UNKNOWN'],
+    ['TICKETS CLOSED', `${game.kills}`],
+    ['TIME ON SHIFT',  fmtTime(game.endAt - game.startAt)],
+    ['RESOLUTION',     game.resolution],
+  ];
   ctx.font = '12px monospace';
-  ctx.fillText('Press R to reopen', SCREEN_W / 2, HALF_H + 20);
+  ctx.textAlign = 'left';
+  rows.forEach(([k, v], i) => {
+    if (t < 700 + i * 110) return; // fields fill in one by one
+    const y = Y + 46 + i * 26;
+    ctx.fillStyle = '#8a6060';
+    ctx.fillText(k, X + 16, y);
+    ctx.fillStyle = '#e8d0d0';
+    ctx.fillText(v, X + 150, y);
+  });
+  ctx.globalAlpha = 1;
+
+  // CLOSED stamp slams down
+  if (t >= STAMP_AT) {
+    const k = Math.min(1, (t - STAMP_AT) / 120), s = 2.6 - 1.6 * k;
+    ctx.save();
+    ctx.translate(X + W - 104, Y + H - 58);
+    ctx.rotate(-0.22);
+    ctx.scale(s, s);
+    ctx.globalAlpha = 0.3 + 0.6 * k;
+    ctx.strokeStyle = '#ff2a2a';
+    ctx.lineWidth = 4;
+    ctx.strokeRect(-76, -24, 152, 48);
+    ctx.fillStyle = '#ff2a2a';
+    ctx.font = 'bold 34px monospace';
+    ctx.textAlign = 'center';
+    ctx.fillText('CLOSED', 0, 2);
+    ctx.restore();
+  }
+  if (t >= STAMP_AT + 400 && (now / 500 | 0) % 2 === 0) {
+    ctx.textAlign = 'center';
+    ctx.font = 'bold 13px monospace';
+    ctx.fillStyle = '#ccc';
+    ctx.fillText('PRESS  R  TO REOPEN', cx, Y + H + 40);
+  }
   ctx.textAlign = 'left';
   ctx.textBaseline = 'alphabetic';
 }
@@ -1928,6 +2524,8 @@ function loop() {
   render();
   requestAnimationFrame(loop);
 }
+// R from the death/victory screen reloads straight into the game
+try { if (sessionStorage.getItem('dnsSkipTitle')) { sessionStorage.removeItem('dnsSkipTitle'); startGame(true); } } catch (e) {}
 loop();
 </script>
 </body>

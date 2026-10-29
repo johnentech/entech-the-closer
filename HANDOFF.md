@@ -103,6 +103,16 @@ Working title: **DNS: The Reckoning**. Player is an IT tech who fights office eq
 - **Splash vs the boss** is measured to its surface (center distance − radius) so a rocket into a big target isn't penalized.
 - **Scripted fight** (perfect aim, never moving, infinite keyboard ammo, damage tallied not applied): won in 27 s with 39 keyboard blasts; phase 2 at 10 s, phase 3 at 18 s; 3 Shadow IT spawned; standing still costs ≈17 HP/s — a real player must dodge and lean on the cannon (39 blasts is more than a full 25-ticket load).
 
+### Chunk 6 — Polish ✅
+- **Title screen** (`drawTitle`, `game.started = false`): the camera slowly pans around the office behind an RGB-split "THE RECKONING" title, a terminal teaser (`nslookup` timing out), the controls, and a blinking "PRESS ANY KEY TO START". Any key or a click starts (`startGame()`); a click also grabs the mouse. **N** toggles sound here too, without starting.
+- **Death screen** (`drawDeathOverlay`): the view slumps sideways to the floor, and the weapon drops away. "YOU GOT A TICKET CLOSED ON YOU." appears over a helpdesk ticket whose fields fill in one by one: random `#INC` number, subject, cause (`game.killedBy`, from `hurtPlayer(dmg, x, y, cause)` → `DEATH_CAUSES`), tickets closed, time on shift, and a random joke `RESOLUTIONS` entry. A red **CLOSED** stamp slams down at `STAMP_AT` 1.3 s with a shake and thud. R works after that.
+- **Victory screen** (`drawVictoryOverlay`): after SERVFAIL, the screen fades to a terminal. `ipconfig /flushdns`, `nslookup`, `ping` are typed with key clicks and their output resolves (`VICTORY_TERM`/`VICTORY_SCHED`). Then a glowing **CONNECTION ESTABLISHED.**, stats (tickets closed, time to resolve, SLA remaining, rank from `victoryRank()`), "It was DNS. It's always DNS." and R to play again (after `VICTORY_BANNER_AT`).
+- **Restart:** R → `restart()` sets a `sessionStorage` flag and reloads, which skips the title (`startGame(true)`). Audio resumes on the next key or click.
+- **Sound effects** (`// --- Audio ---`): all synthesized with Web Audio, no files. `tone()` and `noise()` are the building blocks, and the `SFX` table holds every sound (`gap` = minimum ms between repeats). `sfx(name, x, y)` makes a sound positional: it fades with distance, is muffled without line of sight, and pans left/right. A compressor on the master output prevents clipping. Hooked up so far: both weapons, dry-fire click on empty, weapon switch, explosions, per-enemy wake/windup/pain/death, ink/burst/melee attacks, ink splats, the DNS (intro roar, windup, NXDOMAIN chirps, pain, phase alarm, SERVFAIL), player hurt/death, the CLOSED stamp, pickups (ammo/coffee/cannon/flush each have their own sound), doors (open/denied/arena slam), Flush DNS whoosh, title start jingle, victory chord and terminal typing. A UPS-style beep sounds every 1.4 s while SLA ≤ 25 (`LOW_HEALTH`).
+- **Voice lines** (player character, recorded by a voice actor): the `VOICE` table maps events → `[file, subtitle]` variants plus `chance`, `cooldown` and `priority`. Files load from `sounds/voice/<file>.mp3`, falling back to `.wav`. Missing ones are skipped silently (they show up as 404s in the console until recorded). `say(event)` plays on a single voice channel: a higher priority interrupts, and the same variant never plays twice in a row. Effects are ducked under the voice, and subtitles are drawn by `drawSubtitles()` (`SUBTITLES` const). Events wired: start, ammo, health, cannon, flush_get, flush_use, locked, boss_intro, boss_phase2/3, hurt, low_health, empty, kill, death, victory. **`sounds/SCRIPT.md`** is the recording script for the actor (lines, file names, specs).
+- **N** = sound on/off (saved in `localStorage`). `serve.js` now serves audio MIME types and supports HTTP Range requests (so voice clips can restart).
+- Verified by stepping frames in the browser: title, gameplay subtitles (with a temporary test clip), the death screen, and the victory screen reached by killing the boss. Every SFX plays without errors, and R skips the title. **Not verified by ear.** The browser pane can't play audio to me, so the sound mix needs a listen in a real browser.
+
 ---
 
 ## Running / testing
@@ -114,18 +124,11 @@ Working title: **DNS: The Reckoning**. Player is an IT tech who fights office eq
 
 ## Remaining chunks
 
-### Chunk 6 — Polish (NEXT)
-- Title screen (press any key to start)
-- Death screen (you got a ticket closed on you) — replace `drawDeathOverlay()`
-- Victory screen ("Connection established.") — replace `drawVictoryOverlay()`
-- Sound stubs (AudioContext beeps/noise for shots, enemy hits, explosions, death)
-- ~~HUD flavor: kill counter labeled "TICKETS CLOSED"~~ (done in Chunk 3)
-
-### Chunk 7 — Balance & ammo UX (after Chunk 6)
+### Chunk 7 — Balance & ammo UX (NEXT)
 From play-test round 2 (user feedback after Chunk 5):
 - **More ammo before the boss.** Players reach the arena short on ammo. Raise drop rates/amounts from regular enemies (currently 60% chance of +4 tickets) and/or place more ticket/closure pickups along the route (especially the Server Room).
 - **Boss fight resupply from phase 2.** Once the DNS enters phase 2, periodically spawn HP (coffee) and ammo (tickets/closures) pickups in the arena — e.g. on a timer at random `ARENA_CELLS` away from the boss, with a spawn effect and cap on how many are on the floor. (Shadow IT add drops alone aren't enough.)
-- **Make "out of ammo" obvious.** Right now firing on empty silently does nothing. Add a clear on-screen alert (flashing "OUT OF TICKETS" / "OUT OF CLOSURES", red ammo counter pulse, maybe a dry-fire click once sound exists).
+- **Make "out of ammo" obvious.** Firing on empty now only plays a dry-fire click and the `empty` voice line (Chunk 6). Add a clear on-screen alert: flashing "OUT OF TICKETS" / "OUT OF CLOSURES" and a red pulse on the ammo counter.
 - **Auto-switch weapon when empty**, with an on-screen alert (e.g. "CLOSURES EMPTY — SWITCHING TO KEYBOARD"). Only switch if the other weapon has ammo; if both are empty, show "NO AMMO" instead.
 - **HUD weapon-switch hints.** Make it obvious you can switch: show both weapon slots with key labels (1 / 2) and their ammo counts, highlight the active one, and dim/strike a slot that's empty or not owned. (Current hint is a faint `[1] keyboard 2 cannon` line under the weapon label.)
 
@@ -153,8 +156,11 @@ doorAhead() / doorLocked() / useAction() / checkBossTrigger() / startBossFight()
 updateBoss() / fireVolley() / bossDie() / useFlush()
 switchWeapon() / cycleWeapon()
 
-update()         — player → weapon anim → updateEnemies() → updateProjectiles() → updatePickups() → checkBossTrigger()
-render()         — [shake] ceiling → floor → raycaster (+drawDoorColumn) → drawSprites() → drawWeapon() → drawKeycaps() [/shake] → drawScreenFlash() → drawGlitch() → drawCrosshair() → drawDamageDirs() → drawHUD() → drawBossBar() → drawMinimap() → drawServfail() / drawDeathOverlay() / drawVictoryOverlay()
+audio{} / SFX{} / sfx() — synthesized effects (tone(), noise()); VOICE{} / say() — recorded voice lines + subtitles
+startGame() / restart() / canRestart() — title → play → death/victory → R
+
+update()         — title pan | death stamp | victory typing → player → weapon anim → updateEnemies() → updateProjectiles() → updatePickups() → checkBossTrigger()
+render()         — [shake + death slump] ceiling → floor → raycaster (+drawDoorColumn) → drawSprites() → (title: drawTitle()) → drawWeapon() → drawKeycaps() [/shake] → drawScreenFlash() → drawDeathOverlay() | drawVictoryOverlay() | (drawGlitch() → drawCrosshair() → drawDamageDirs() → drawHUD() → drawBossBar() → drawMinimap() → drawServfail()) → drawSubtitles()
 ```
 
 ---
