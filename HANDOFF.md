@@ -257,6 +257,13 @@ The user supplied title art: `art/title.webp` (1448×1086), with the character i
 
 ---
 
+### Shadow IT tuning, Flush purge, ammo pickup sound ✅
+- **Shadow IT** (`ENEMY_TYPES.shadow`): HP 300 → **270**, so it takes exactly 3 keyboard blasts point-blank out to ~4 tiles (verified 300/300 trials; 5–6 blasts from 7 tiles because of falloff). **New `splashMult: 2.4`** (applied in `explode()` for any type that sets it), so Shadow IT is weak to the Closing Cannon: a direct hit kills it, and two near misses within ~1.3 tiles do. Spawn timing is unchanged (`BOSS_PHASES`: phase 2 every 9 s, max 2; phase 3 every 5 s, max 3; first one 1.2 s after the phase starts).
+- **Flush DNS Cache** also purges every living Shadow IT. Each one dies through a normal `damageEnemy` kill (death sound, kill count, coffee + closures drop), with a purple burst; the message reports how many were purged.
+- **Ammo pickups** (keycaps and closures) play Freedoom's shotgun-pump clunk, `sounds/sfx/dssgcock.wav` (SFX name `ammo`, with a synthesized clack-clunk fallback). Coffee keeps `dsitemup`.
+
+---
+
 ## Remaining chunks
 None planned. Ideas: environment props as sprites (desks, plants, water cooler), music, sharing the game (itch.io private draft → public).
 
