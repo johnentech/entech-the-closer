@@ -272,10 +272,12 @@ Both first-person weapons were redrawn (`// --- First-person weapons: chunky pix
   - **Each frame:** moving parts go into the scratch canvas `wbuf` (`WBUF_W`×`WBUF_H`). `blitWeapon()` tints it by room (`AREA_TINT` by `FLOOR_MAP`, eased: office none, Server Room blue, arena purple, IT closet warm), adds a red wash while `game.hurt`, then scales it ×4 onto the screen.
   - The smooth radial muzzle bloom is still drawn at screen resolution behind each weapon.
 - **Closing Cannon** (`CANNON_SPRITE`, 104×64, plus 28 rows above for the flash; muzzle at screen y `CANNON_MUZZLE_Y` 300):
-  - a gunmetal-olive tube widening toward you (`cannonHW`), with two bolted rings and rivets, scratches, a rear sight block and front post, and a muzzle rim with a dark bore
-  - the next rocket's red nose sits in the bore while loaded
+  - **points forward like Doom's launcher** (redrawn after play-test; the first version read as aiming at the ceiling): seen from behind and above, with a round muzzle at the far end (`CANNON_MY`), the tube flaring toward you in perspective (`cannonHW`), and the rings and red band arching (∩) over the top. Each pixel's position "along" the tube is `y + CANNON_ARCH·hw·n`; `CANNON_RINGS` / `CANNON_BAND` are ranges of that, and `cannonPeak(a)` gives the row where an arch peaks.
+  - gunmetal-olive with bolted rings and rivets that follow the arch, scratches, a front sight post behind the muzzle and a rear sight block nearer you
+  - the loaded round shows as a red disc down the bore
   - right glove wrapped over the right side; left glove underneath with its thumb on top
-  - the red band carries **"CLOSE" / "W/O EMAIL"** in two lines, drawn at full resolution after the blit (outlined) so it stays readable
+  - the red band carries **"CLOSE" / "W/O EMAIL"** in two lines, drawn at full resolution after the blit (outlined) so it stays readable, with each letter set on the band's arch
+  - `weapon.fireAt` starts at -1e9, so no flash, smoke or key ripple shows right after load
   - firing: a pixel starburst flash (`CANNON_FLASH`, 2 variants), the existing kick, then 3 smoke puffs curling up for ~0.9 s
 - **Keyboard** (`KEYBOARD_BASE` + `KEYBOARD_HANDS`, 96×40):
   - a tapered mechanical-keyboard case with a cable out the back
