@@ -298,11 +298,18 @@ Both first-person weapons were redrawn (`// --- First-person weapons: chunky pix
 
 ---
 
+### Bigger, hovering pickups + new Closing Cannon pickups ✅
+- **All pickups are ~1.5× bigger** (`PICKUPS[kind].scale`: keycaps 0.24, coffee 0.21, closures 0.22, cannon 0.24, flush 0.24) and **hover gently**: `drawSprites` bobs each one between 5% and 8.5% of wall height on a ~2 s cycle, phase-offset by its position so they don't move in lockstep. The user chose no glow, sparkle or minimap dots. Keycaps and coffee keep their sprite designs.
+- **`TEX.cannon`** (48×22): the launcher lying on its side, matching the held weapon. Shaded dark gunmetal body with a rounded dome front, sight knob, three ribs, the red band with label marks, vent slots, two grips underneath, and an open rear end.
+- **`TEX.closures`** (24×24): an ammo case with three domed gunmetal closure rounds (red band near the tip) standing in it, a red stripe with label marks and a latch.
+- Both use `outlineTex()` for a dark outline, like the weapons.
+
+---
+
 ## Remaining chunks
 
 ### Next session (user's list, 2026-10-29). Not started; discuss before coding
-1. **Make pickups more noticeable:** draw them **larger** (scale up in `PICKUPS[kind].scale`) and give them **a gentle hover** (slow bob above the floor). The user decided: **no glow, no sparkle, no minimap dots.** Keep the keycaps and coffee sprite designs as they are (just bigger).
-2. **Redesign the Closing Cannon pickups to look better.** Both the closures ammo pickup (`TEX.closures`) and the cannon weapon pickup (`TEX.cannon`) should match the new launcher art (dark gunmetal, dome, ribs, red CLOSE W/O EMAIL band).
+1. ~~Make pickups more noticeable~~ and 2. ~~Redesign the Closing Cannon pickups~~: done (see "Bigger, hovering pickups" above).
 3. **Weak melee fallback weapon** for when the player has no ammo. To decide: what it is (gloved punch, stapler, coffee mug, mouse on a cord, …), its key (3?), damage and range, whether it auto-equips when both weapons are empty (`onEmpty` currently shows "NO AMMO"), and how it fits the HUD weapon slots.
 4. **Secret easter-egg room**, unlocked by the player doing something. To decide: where it is (a hidden wall that slides open like Doom's secrets, behind a poster, in the office or the IT Closet), what unlocks it (pressing E on a suspicious wall, shooting something, typing a code like a cheat, flushing DNS in a certain spot, …), and what's inside (credits for the team / voice actor, bonus supplies, an IT joke), plus a "SECRET FOUND" message and sound.
 
