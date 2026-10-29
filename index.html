@@ -482,66 +482,93 @@ function say(event) {
   return true;
 }
 
-// --- Music: synthesized metal loops (no files) ---
-// title: an original Doom-style riff (palm-muted gallop on low E, power-chord hits), opening with four slammed
-//        chords timed to the logo landing. game: a slower, darker, quieter loop under gameplay.
-// Bars are 16 sixteenth-notes. Guitar tokens: '.' rest, 'x' palm-muted chug on low E, '-' hold the previous chord,
-// or a power-chord root ('G2', 'F#2', …). Drum lines: 'x' = hit on that sixteenth.
-const NOTE = { E2: 82.41, 'F#2': 92.5, G2: 98.0, A2: 110.0, Bb2: 116.54, B2: 123.47, C3: 130.81, D3: 146.83, E3: 164.81 };
+// --- Music: synthesized metal (no files) ---
+// All original compositions in a Doom/90s-metal style:
+//   title — palm-muted gallop on low E with power-chord hits, opening with four slammed chords timed to the logo.
+//   game  — a driving 16-bar song: E riff with chromatic stabs → riff + lead melody → A gallop → riff + drum fill.
+//   boss  — 16 bars, faster: double-kick tremolo riff → chord hits → riff + screaming lead → half-time breakdown →
+//           snare-roll build → riff with a harmonized lead.
+// A bar is 16 sixteenth-notes. Guitar tokens: '.' rest, 'x' palm-muted chug on low E, '~A2' muted chug on another
+// note, '-' hold, or a power-chord root ('G2', 'F#2', …). Lead tokens (l, and l2 = harmony): note names, '-' hold.
+// Drum lines are 16 chars: k kick, s snare, h hi-hat, c crash ('x' = hit); t toms ('h' / 'm' / 'l' = high/mid/low).
 const bar = s => s.trim().split(/\s+/);
+const HAT8 = 'x.x.x.x.x.x.x.x.';
+const mk = (g, k, s, h = HAT8, c = '', l = '', l2 = '', t = '') => ({ g: bar(g), k, s, h, c, l: l && bar(l), l2: l2 && bar(l2), t });
+
+const NOTE_CACHE = {};
+function noteFreq(n) { // 'E2', 'F#4', 'Bb3' → Hz
+  if (NOTE_CACHE[n]) return NOTE_CACHE[n];
+  const m = /^([A-G])(#|b)?(\d)$/.exec(n);
+  const semi = { C: 0, D: 2, E: 4, F: 5, G: 7, A: 9, B: 11 }[m[1]] + (m[2] === '#' ? 1 : m[2] === 'b' ? -1 : 0);
+  return (NOTE_CACHE[n] = 440 * 2 ** ((12 * (+m[3] + 1) + semi - 69) / 12));
+}
+
+// Game riff bars (reused)
+const G_A1 = 'x . x . x . G2 - x . x . A2 - G2 -', G_A2 = 'x . x . x . G2 - x . x . Bb2 - A2 -';
+const G_A3 = 'x . x . x . D3 - x . x . C3 - B2 -', G_A4 = '~G2 . ~G2 . ~A2 . ~A2 . B2 - - - - - - -';
+const GK = 'x.x.x...x.x.....', BACK = '....x.......x...';
+// Boss riff bars (reused)
+const B_1 = 'x x x x x x x x G2 - x x F#2 - x x', B_2 = 'x x x x x x x x Bb2 - x x A2 - x x';
+const B_3 = 'x x x x x x x x C3 - x x B2 - x x', B_4 = 'E3 - - - D3 - - - C3 - - - Bb2 - - -';
+const BK = 'xxxxxxxxxxxxxxxx', HITS = 'x...x...x...x...';
+const B_L = ['B4 - - - - - - - Bb4 - - - A4 - - -', 'G4 - A4 - Bb4 - - - A4 - G4 - F#4 - - -',
+             'E5 - - - D5 - - - C5 - - - Bb4 - - -', 'B4 - - - - - - - - - - - - - - -'];
+const B_H = ['F#4 - - - - - - - F4 - - - E4 - - -', 'D4 - E4 - F4 - - - E4 - D4 - C#4 - - -',
+             'B4 - - - A4 - - - G4 - - - F4 - - -', 'F#4 - - - - - - - - - - - - - - -']; // harmony a fourth below
+
 const TRACKS = {
   title: {
     bpm: 168, intro: 2, tone: 2600, // first `intro` bars play once, the rest loop; tone = guitar brightness (lowpass Hz)
-    gtr: [
-      'E2 - - . E2 - - . E2 - - . E2 - - .',   // DUN  DUN  DUN  DUN
-      'G2 - - - - - - - F#2 - - - - - - -',
-      'x . x x x . x x x . x x G2 - F#2 -',
-      'x . x x x . x x D3 - E3 - C3 - - -',
-      'x . x x x . x x x . x x A2 - Bb2 -',
-      'x . x x x . x x B2 - - - E2 - E2 -',
-    ].map(bar),
-    kick:  ['x...x...x...x...', 'x.......x.......', 'x.xxx.xxx.xxx.x.', 'x.xxx.xxx.x.x...', 'x.xxx.xxx.xxx.x.', 'x.xxx.xxx...x.x.'],
-    snare: ['................', '............xxxx', '....x.......x...', '....x.......x...', '....x.......x...', '....x.......x.x.'],
-    hat:   ['................', '................', 'x.x.x.x.x.x.x.x.', 'x.x.x.x.x.x.x.x.', 'x.x.x.x.x.x.x.x.', 'x.x.x.x.x.x.x.x.'],
-    crash: ['x...x...x...x...', 'x...............', 'x...............', '................', '................', '............x...'],
+    bars: [
+      mk('E2 - - . E2 - - . E2 - - . E2 - - .', 'x...x...x...x...', '................', '', 'x...x...x...x...'), // DUN DUN DUN DUN
+      mk('G2 - - - - - - - F#2 - - - - - - -', 'x.......x.......', '............xxxx', '', 'x...............'),
+      mk('x . x x x . x x x . x x G2 - F#2 -', 'x.xxx.xxx.xxx.x.', BACK, HAT8, 'x...............'),
+      mk('x . x x x . x x D3 - E3 - C3 - - -', 'x.xxx.xxx.x.x...', BACK),
+      mk('x . x x x . x x x . x x A2 - Bb2 -', 'x.xxx.xxx.xxx.x.', BACK),
+      mk('x . x x x . x x B2 - - - E2 - E2 -', 'x.xxx.xxx...x.x.', '....x.......x.x.', HAT8, '............x...'),
+    ],
   },
   game: {
-    bpm: 112, intro: 0, tone: 1100, // muffled, so it sits under the effects and voice
-    gtr: [
-      'x . . . x . . . x . x . G2 - - -',
-      'x . . . x . . . x . x . F#2 - - -',
-      'C3 - - - - - - - x . . . x . x .',
-      'D3 - - - - - - - x . x . B2 - - -',
-      'x . . . x . . . x . x . A2 - - -',
-      'x . . . x . . . x . x . Bb2 - - -',
-      'C3 - - - - - - - B2 - - - - - - -',
-      'x . x . x . x . x x x x E2 - - -',
-    ].map(bar),
-    kick:  ['x.......x.x.....', 'x.......x.x.....', 'x.......x.......', 'x.......x.......', 'x.......x.x.....', 'x.......x.x.....', 'x.......x.......', 'x.x.x.x.x.x.x...'],
-    snare: ['....x.......x...', '....x.......x...', '....x.......x...', '....x.......x...', '....x.......x...', '....x.......x...', '....x.......x...', '....x.......x.xx'],
-    hat:   Array(8).fill('x.x.x.x.x.x.x.x.'),
-    crash: ['x...............', '................', '................', '................', 'x...............', '................', '................', '................'],
+    bpm: 160, intro: 0, tone: 2000,
+    bars: [
+      // A: the riff
+      mk(G_A1, GK, BACK, HAT8, 'x...............'), mk(G_A2, GK, BACK), mk(G_A3, GK, BACK), mk(G_A4, 'x.x.x.x.x.......', BACK),
+      // A + lead melody
+      mk(G_A1, GK, BACK, HAT8, 'x...............', 'E4 - - - G4 - - - A4 - B4 - G4 - - -'),
+      mk(G_A2, GK, BACK, HAT8, '', 'E4 - - - G4 - - - Bb4 - A4 - G4 - E4 -'),
+      mk(G_A3, GK, BACK, HAT8, '', 'D5 - - - B4 - - - C5 - B4 - A4 - G4 -'),
+      mk(G_A4, 'x.x.x.x.x.......', BACK, HAT8, '', 'F#4 - - - - - - - G4 - - - F#4 - - -'),
+      // B: gallop on A, then back to E
+      mk('~A2 . ~A2 ~A2 ~A2 . ~A2 ~A2 C3 - - - B2 - - -', 'x.xxx.xxx...x...', BACK, HAT8, 'x...............', 'A4 - - - - - - - E5 - - - D5 - - -'),
+      mk('~A2 . ~A2 ~A2 ~A2 . ~A2 ~A2 D3 - - - C3 - - -', 'x.xxx.xxx...x...', BACK, HAT8, '', 'C5 - - - - - - - B4 - A4 - G4 - - -'),
+      mk('x . x x x . x x G2 - - - A2 - - -', 'x.xxx.xxx...x...', BACK),
+      mk('x . x x x . x x B2 - - - - - - -', 'x.xxx.xxx.......', BACK, HAT8, '........x.......'),
+      // A again, ending on a tom fill
+      mk(G_A1, GK, BACK, HAT8, 'x...............'), mk(G_A2, GK, BACK), mk(G_A3, GK, BACK),
+      mk('x x x x x x x x B2 - - - B2 - - -', 'x.x.x.x.x.......', '....x.......xxxx', 'x.x.x.x.........', '', '', '', '........hhmmll..'),
+    ],
   },
   boss: {
-    bpm: 150, intro: 0, tone: 1500, // faster and denser than `game`: tremolo chugs, double kick, chromatic stabs
-    gtr: [
-      'x x x x x x x x G2 - x x F#2 - x x',
-      'x x x x x x x x Bb2 - x x A2 - x x',
-      'x . x x x . x x x . x x C3 - B2 -',
-      'x . x x x . x x Bb2 - - - A2 - G2 -',
-      'x x x x x x x x G2 - x x F#2 - x x',
-      'x x x x x x x x D3 - x x C3 - x x',
-      'E3 - - - D3 - - - C3 - - - Bb2 - - -',
-      'x x x x x x x x B2 - - - - - - -',
-    ].map(bar),
-    kick:  ['xxxxxxxxx.xxx.xx', 'xxxxxxxxx.xxx.xx', 'x.xxx.xxx.xxx.x.', 'x.xxx.xxx.......', 'xxxxxxxxx.xxx.xx', 'xxxxxxxxx.xxx.xx', 'x...x...x...x...', 'xxxxxxxxx.......'],
-    snare: ['....x.......x...', '....x.......x...', '....x.......x...', '....x.......x...', '....x.......x...', '....x.......x...', '....x.......x...', '....x.......xxxx'],
-    hat:   Array(8).fill('x.x.x.x.x.x.x.x.'),
-    crash: ['x...............', '................', 'x...............', '................', 'x...............', '................', 'x...x...x...x...', '................'],
+    bpm: 176, intro: 0, tone: 2200,
+    bars: [
+      // Tremolo riff on double kick, then chord hits
+      mk(B_1, BK, BACK, HAT8, 'x...............'), mk(B_2, BK, BACK), mk(B_3, BK, BACK), mk(B_4, HITS, HITS, '', HITS),
+      // Riff + screaming lead
+      mk(B_1, BK, BACK, HAT8, 'x...............', B_L[0]), mk(B_2, BK, BACK, HAT8, '', B_L[1]),
+      mk(B_3, BK, BACK, HAT8, '', B_L[2]), mk(B_4, HITS, HITS, '', HITS, B_L[3]),
+      // Half-time breakdown, then a snare-roll build
+      mk('~E2 - - - ~E2 - ~E2 - G2 - - - - - - -', 'x...x.x.........', '........x.......', 'x...x...x...x...', 'x...............'),
+      mk('~E2 - - - ~E2 - ~E2 - Bb2 - - - A2 - - -', 'x...x.x.........', '........x.......', 'x...x...x...x...'),
+      mk('~E2 - - - ~E2 - ~E2 - G2 - - - - - - -', 'x...x.x.........', '........x.......', 'x...x...x...x...'),
+      mk('x x x x x x x x x x x x x x x x', BK, 'x.x.x.x.xxxxxxxx', ''),
+      // Riff with the lead harmonized
+      mk(B_1, BK, BACK, HAT8, 'x...............', B_L[0], B_H[0]), mk(B_2, BK, BACK, HAT8, '', B_L[1], B_H[1]),
+      mk(B_3, BK, BACK, HAT8, '', B_L[2], B_H[2]), mk(B_4, HITS, HITS, '', HITS, B_L[3], B_H[3]),
+    ],
   },
 };
-const MUSIC_VOL = { title: 0.5, game: 0.2, boss: 0.12 }; // boss is denser, so 0.12 renders at the same loudness (RMS) as game at 0.2
-const music = { bus: null, duck: null, curve: null, name: null, track: null, step: 0, nextAt: 0, timer: 0 };
+const MUSIC_VOL = { title: 0.5, game: 0.2, boss: 0.16 }; // game ≈ 0.049 RMS, boss ≈ 0.05 (offline render)
+const music = { bus: null, duck: null, echo: null, curve: null, name: null, track: null, step: 0, nextAt: 0, timer: 0 };
 
 // Switch tracks (null fades out). lead = seconds until the first note (the title's first chord lands with the logo).
 function playMusic(name, lead = 0.05) {
@@ -555,6 +582,12 @@ function playMusic(name, lead = 0.05) {
     const n = 2048, k = 60;
     music.curve = new Float32Array(n);
     for (let i = 0; i < n; i++) { const x = i * 2 / n - 1; music.curve[i] = (3 + k) * x * 20 * Math.PI / 180 / (Math.PI + k * Math.abs(x)); }
+    // Echo for the lead guitar: 0.28 s delay with feedback, mixed back into the bus
+    const d = c.createDelay(1), fb = c.createGain(), wet = c.createGain();
+    d.delayTime.value = 0.28; fb.gain.value = 0.32; wet.gain.value = 0.35;
+    d.connect(fb).connect(d);
+    d.connect(wet).connect(music.bus);
+    music.echo = d;
   }
   if (name === music.name) return;
   music.name = name;
@@ -576,7 +609,7 @@ function scheduleMusic() {
   const sd = 60 / T.bpm / 4;
   if (music.nextAt < c.currentTime - 0.1) music.nextAt = c.currentTime + 0.05; // tab was asleep: don't burst-play the backlog
   while (music.nextAt < c.currentTime + 0.25) {
-    const bars = T.gtr.length;
+    const bars = T.bars.length;
     let b = music.step >> 4;
     if (b >= bars) b = T.intro + (b - T.intro) % (bars - T.intro);
     if (!audio.muted) musicStep(T, b, music.step & 15, music.nextAt, sd);
@@ -585,19 +618,35 @@ function scheduleMusic() {
   }
 }
 
+// How many sixteenths a note at step s lasts (itself + following holds)
+const holdLen = (tokens, s) => { let n = 1; while (s + n < 16 && tokens[s + n] === '-') n++; return n; };
+
 function musicStep(T, b, s, t, sd) {
-  const g = T.gtr[b][s], out = music.bus;
-  if (g === 'x') { guitar(t, NOTE.E2, sd, true, T.tone); bassNote(t, NOTE.E2 / 2, sd, true); }
-  else if (NOTE[g]) {
-    let len = 1;
-    while (s + len < 16 && T.gtr[b][s + len] === '-') len++;
-    guitar(t, NOTE[g], len * sd, false, T.tone);
-    bassNote(t, NOTE[g] / 2, len * sd, false);
+  const B = T.bars[b], g = B.g[s], out = music.bus;
+  if (g === 'x') { guitar(t, noteFreq('E2'), sd, true, T.tone); bassNote(t, noteFreq('E1'), sd, true); }
+  else if (g[0] === '~') { const f = noteFreq(g.slice(1)); guitar(t, f, sd, true, T.tone); bassNote(t, f / 2, sd, true); }
+  else if (g !== '.' && g !== '-') {
+    const f = noteFreq(g), len = holdLen(B.g, s) * sd;
+    guitar(t, f, len, false, T.tone);
+    bassNote(t, f / 2, len, false);
   }
-  if (T.kick[b][s] === 'x')  tone(out, t, { type: 'sine', f0: 150, f1: 42, ms: 160, vol: 0.9 });
-  if (T.snare[b][s] === 'x') { noise(out, t, { ms: 170, vol: 0.45, f0: 1900, q: 0.8 }); tone(out, t, { type: 'triangle', f0: 200, f1: 150, ms: 90, vol: 0.25 }); }
-  if (T.hat[b][s] === 'x')   noise(out, t, { ms: 35, vol: 0.1, f0: 8000, filter: 'highpass' });
-  if (T.crash[b][s] === 'x') noise(out, t, { ms: 1400, vol: 0.25, f0: 5000, filter: 'highpass' });
+  for (const L of [B.l, B.l2]) if (L && L[s] !== '.' && L[s] !== '-') leadNote(t, noteFreq(L[s]), holdLen(L, s) * sd);
+  if (B.k[s] === 'x') { // kick: a pitch-dropping thump plus a beater click
+    tone(out, t, { type: 'sine', f0: 160, f1: 42, ms: 170, vol: 1.0 });
+    noise(out, t, { ms: 10, vol: 0.35, f0: 4000, filter: 'highpass' });
+  }
+  if (B.s[s] === 'x') { // snare: noise crack, a body tone and a bright snap
+    noise(out, t, { ms: 190, vol: 0.55, f0: 2000, q: 0.7 });
+    tone(out, t, { type: 'triangle', f0: 220, f1: 170, ms: 110, vol: 0.35 });
+    noise(out, t, { ms: 40, vol: 0.2, f0: 5000, filter: 'highpass' });
+  }
+  if (B.h[s] === 'x') noise(out, t, { ms: 35, vol: 0.09, f0: 8000, filter: 'highpass' });
+  if (B.c[s] === 'x') noise(out, t, { ms: 1500, vol: 0.28, f0: 5000, filter: 'highpass' });
+  const tm = B.t[s];
+  if (tm === 'h' || tm === 'm' || tm === 'l') {
+    const [f0, f1] = { h: [240, 170], m: [170, 120], l: [120, 80] }[tm];
+    tone(out, t, { type: 'sine', f0, f1, ms: 260, vol: 0.7 });
+  }
 }
 
 // Distorted power chord (root + fifth + octave), or a palm-muted chug (root + fifth, short and darker).
@@ -626,6 +675,41 @@ function guitar(t, f, dur, muted, tone) {
       o.stop(end + 0.3);
     }
   }
+}
+
+// Lead guitar: saw + square, lightly overdriven, with vibrato that fades in on held notes, sent to the echo
+function leadNote(t, f, dur) {
+  const c = audio.ctx, end = t + dur;
+  const sh = c.createWaveShaper(), lp = c.createBiquadFilter(), env = c.createGain();
+  const lfo = c.createOscillator(), depth = c.createGain();
+  sh.curve = music.curve;
+  sh.oversample = '2x';
+  lp.type = 'lowpass';
+  lp.frequency.value = 3400;
+  env.gain.setValueAtTime(0.0001, t);
+  env.gain.exponentialRampToValueAtTime(0.08, t + 0.01);
+  env.gain.setTargetAtTime(0.065, t + 0.05, 0.2);
+  env.gain.setTargetAtTime(0, end, 0.05);
+  lfo.frequency.value = 5.5;
+  depth.gain.setValueAtTime(0, t);
+  depth.gain.linearRampToValueAtTime(0, t + 0.12);
+  depth.gain.linearRampToValueAtTime(f * 0.012, t + 0.35);
+  lfo.connect(depth);
+  sh.connect(lp).connect(env);
+  env.connect(music.bus);
+  env.connect(music.echo);
+  for (const [type, mul] of [['sawtooth', 1], ['square', 1.003]]) {
+    const o = c.createOscillator(), pre = c.createGain();
+    o.type = type;
+    o.frequency.value = f * mul;
+    depth.connect(o.frequency);
+    pre.gain.value = 0.35;
+    o.connect(pre).connect(sh);
+    o.start(t);
+    o.stop(end + 0.3);
+  }
+  lfo.start(t);
+  lfo.stop(end + 0.3);
 }
 
 function bassNote(t, f, dur, muted) {

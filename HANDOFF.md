@@ -245,14 +245,15 @@ The user supplied title art: `art/title.webp` (1448×1086), with the character i
   - 44 rack-LED clusters that randomly go dark or flare
   - a glint band sweeping through the logo's own pixels every `GLINT_EVERY_MS`
   - **file:// fallback:** reading pixels from a file:// image is blocked (tainted canvas), so effects are skipped and the whole art punches in instead of just the logo.
-- **Music** (`// --- Music` in the audio section): synthesized, no files. `TRACKS` hold 16th-note bars of guitar tokens (`x` = palm-muted low-E chug, `G2` etc. = power chord, `-` = hold) plus kick/snare/hat/crash lines.
-  - `title`: an original Doom-style riff at 168 BPM (Doom's actual music is copyrighted). It opens with four slammed E chords (`intro: 2` bars play once), then loops a 4-bar gallop riff.
-  - `game`: a darker 8-bar loop at 112 BPM, low-passed and quiet.
-  - `boss`: a faster, denser 8-bar loop at 150 BPM (tremolo 16th chugs, double kick, chromatic stabs). It plays while the DNS is alive and cuts to silence when it dies, so SERVFAIL's explosions play alone. `MUSIC_VOL.boss` is 0.12 because that offline-renders at the same RMS loudness as `game` at 0.2.
-  - Instruments: `guitar()` is detuned saws → waveshaper distortion → lowpass; `bassNote()`; drums reuse `tone()` / `noise()`.
+- **Music** (`// --- Music` in the audio section): synthesized, no files, all original compositions (Doom's E1M1 etc. are copyrighted). Each track is a list of bars built with `mk(guitar, kick, snare, hat, crash, lead, lead2, toms)`.
+  - **Bars** are 16 sixteenth-notes. Guitar tokens: `x` = palm-muted low-E chug, `~A2` = muted chug on another note, `G2` etc. = power chord, `-` = hold, `.` = rest. `lead`/`lead2` take note names (any octave, parsed by `noteFreq()`). Drum lines use `x` for hits; toms use `h`/`m`/`l`.
+  - `title`: the Doom-style riff at 168 BPM. It opens with four slammed E chords (`intro: 2` bars play once), then loops a 4-bar gallop riff.
+  - `game` (reworked after play-test: the first version was too slow and mundane): a 16-bar song at 160 BPM, brighter tone. E riff with chromatic stabs → the riff with a lead melody → A gallop with lead → the riff ending on a tom fill.
+  - `boss` (reworked: it needed more punch): 16 bars at 176 BPM. Double-kick tremolo riff → chord hits → the riff with a screaming lead → half-time breakdown → snare-roll build → the riff with the lead harmonized a fourth below. It plays while the DNS is alive and cuts to silence when it dies, so SERVFAIL's explosions play alone.
+  - Instruments: `guitar()` is detuned saws → waveshaper distortion → lowpass. `leadNote()` is saw + square, lightly driven, with vibrato that fades in on held notes and a send to a shared 0.28 s echo (`music.echo`). `bassNote()`. Punchier drums: the kick has a beater click, the snare a body tone and snap, plus pitched toms.
   - `scheduleMusic()` is a 0.25 s look-ahead scheduler on a 40 ms timer. `syncMusic()` (called from `update()`) picks the track: title / game / boss / silence on death, victory and SERVFAIL.
-  - The bus is ducked under voice lines (`music.duck`) and muted by **N**. Volumes are in `MUSIC_VOL` (title 0.5, game 0.2, boss 0.12).
-  - Offline-render check: title peak 0.67 (no clipping); the gameplay loop is ~20 dB under the shotgun SFX. **Not heard by me**, so the mix needs a real listen.
+  - The bus is ducked under voice lines (`music.duck`) and muted by **N**. Volumes are in `MUSIC_VOL` (title 0.5, game 0.2, boss 0.16).
+  - Offline-render check (full 16 bars): game peak 0.32 / RMS 0.071, boss peak 0.30 / RMS 0.080, title peak 0.67; no clipping. **Not heard by me**, so the mix needs a real listen.
 - `serve.js` serves `.webp` as `image/webp`.
 
 ---
