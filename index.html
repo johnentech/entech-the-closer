@@ -161,7 +161,13 @@ const weapon = {
   COOL_MS:  WEAPONS.keyboard.COOL_MS,
   kickY:    0,      // positive = pushed down off-screen
   flash:    0,
+  bobAmp:   0,      // walking bob strength, 0 (standing) → 1 (moving full speed)
 };
+// Doom-style walking bob: side to side in a U-shaped arc (x = cos, y = |sin|), dipping at the middle of each swing
+const BOB_X        = 34;   // px each way
+const BOB_Y        = 14;   // px dip
+const BOB_CYCLE_MS = 1000; // one full left-right-left swing
+const BOB_EASE     = 0.12; // how fast the bob builds up / settles per frame
 const PELLETS    = 7;
 const SPREAD     = 0.09;
 // Per-pellet damage is random in [MIN, MAX], scaled down with range: full until FALLOFF_START
@@ -1739,7 +1745,11 @@ function update() {
   // Normalize diagonal, then scale
   const len = Math.sqrt(mx * mx + my * my);
   if (len > 0) { mx = mx / len * MOVE_SPEED; my = my / len * MOVE_SPEED; }
+  const px0 = player.x, py0 = player.y;
   tryMove(player, mx, my, COLLIDE);
+  // Bob follows how far you actually moved (walking into a wall doesn't sway the weapon)
+  const moved = Math.min(1, Math.hypot(player.x - px0, player.y - py0) / MOVE_SPEED);
+  weapon.bobAmp += (moved - weapon.bobAmp) * BOB_EASE;
 
   // Weapon animation
   const now  = performance.now();
@@ -2367,8 +2377,12 @@ function drawSprites() {
 }
 
 function drawWeapon() {
+  const a = Math.PI * 2 * performance.now() / BOB_CYCLE_MS;
+  ctx.save();
+  ctx.translate(Math.cos(a) * BOB_X * weapon.bobAmp, Math.abs(Math.sin(a)) * BOB_Y * weapon.bobAmp);
   if (game.weapon === 'cannon') drawCannon();
   else drawKeyboard();
+  ctx.restore();
 }
 
 function drawKeyboard() {

@@ -208,6 +208,11 @@ The Printer read as a white block with red eyes, so `drawPrinter` / `drawPrinter
 
 ---
 
+### Weapon bob ✅
+Doom-style walking sway. In `drawWeapon()` the weapon is translated by `cos(a) × BOB_X` sideways and `|sin(a)| × BOB_Y` down, a U-shaped arc that dips mid-swing, with `a` cycling every `BOB_CYCLE_MS`. Defaults: 34 px, 14 px, 1000 ms. Strength is `weapon.bobAmp`, which eases (`BOB_EASE`) toward how far the player actually moved this frame ÷ `MOVE_SPEED`, so it builds in ~0.5 s, settles when you stop, and stays still when walking into a wall. The small idle breathing bob is unchanged.
+
+---
+
 ## Remaining chunks
 None planned. Ideas: environment props as sprites (desks, plants, water cooler), music, sharing the game (itch.io private draft → public).
 
