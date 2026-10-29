@@ -204,6 +204,7 @@ function ensureAudio() {
     audio.noise = c.createBuffer(1, c.sampleRate, c.sampleRate);
     const d = audio.noise.getChannelData(0);
     for (let i = 0; i < d.length; i++) d[i] = Math.random() * 2 - 1;
+    loadSfxFiles();
   }
   if (audio.ctx.state === 'suspended') audio.ctx.resume();
 }
@@ -288,6 +289,7 @@ const SFX = {
   } },
   dns_windup: { gap: 100, play: (o, t) => tone(o, t, { type: 'sawtooth', f0: 100, f1: 400, ms: 500, vol: 0.2 }) },
   dns_pain:   { gap: 160, play: (o, t) => tone(o, t, { f0: 220, f1: 140, ms: 120, vol: 0.12 }) },
+  nx_hit:     { gap: 60, play: (o, t) => noise(o, t, { ms: 200, vol: 0.3, f0: 1500, f1: 300, q: 2 }) },
   nx:         { gap: 80, play: (o, t) => { for (let i = 0; i < 4; i++) tone(o, t + i * 0.05, { f0: 2400 - i * 300, f1: 600, ms: 90, vol: 0.09 }); } },
   phase:      { play: (o, t) => { for (let i = 0; i < 3; i++) { tone(o, t + i * 0.32, { f0: 880, ms: 140, vol: 0.12 }); tone(o, t + i * 0.32 + 0.15, { f0: 660, ms: 140, vol: 0.12 }); } } },
   servfail:   { play: (o, t) => [220, 233, 311].forEach(f => tone(o, t, { type: 'sawtooth', f0: f, f1: f / 8, ms: 2600, vol: 0.14, attack: 20 })) },
@@ -316,6 +318,46 @@ const SFX = {
   victory: { play: (o, t) => [523, 659, 784, 1047].forEach((f, i) => tone(o, t + i * 0.09, { type: 'triangle', f0: f, ms: 1400 - i * 90, vol: 0.18, attack: 10 })) },
 };
 
+// Recorded effects from Freedoom (BSD license, see sounds/sfx/FREEDOOM-LICENSE.adoc), in sounds/sfx/<file>.wav.
+// When a sound lists several files one is picked at random. Sounds not listed here, or whose files
+// are missing, use the synthesized version from SFX.
+const SFX_DIR      = 'sounds/sfx/';
+const SFX_FILE_VOL = 0.9;
+const IMP_SIGHT = ['dsbgsit1', 'dsbgsit2'], IMP_DIE = ['dsbgdth1', 'dsbgdth2'];
+const SFX_FILES = {
+  keyboard: ['dsshotgn'],   // shotgun
+  cannon:   ['dsrlaunc'],   // rocket launcher
+  explosion: ['dsbarexp'],
+  // Printer, Router and Shadow IT all sound like imps
+  printer_wake: IMP_SIGHT, router_wake: IMP_SIGHT, shadow_wake: IMP_SIGHT,
+  printer_windup: ['dsbgact'], router_windup: ['dsbgact'], shadow_windup: ['dsbgact'],
+  printer_pain: ['dspopain'], router_pain: ['dspopain'], shadow_pain: ['dspopain'],
+  printer_die: IMP_DIE, router_die: IMP_DIE, shadow_die: IMP_DIE,
+  ink: ['dsfirsht'], burst: ['dsfirsht'], splat: ['dsfirxpl'], swipe: ['dsclaw'],
+  // The DNS sounds like a cacodemon
+  dns_intro: ['dscacsit'], dns_windup: ['dsdmact'], dns_pain: ['dsdmpain'], nx: ['dsfirsht'], nx_hit: ['dsfirxpl'], servfail: ['dscacdth'],
+  // Doors, pickups, switch
+  door: ['dsdoropn'], denied: ['dsnoway'], lever: ['dsswtchn'],
+  pickup: ['dsitemup'], heal: ['dsitemup'], weapon: ['dswpnup'], powerup: ['dsgetpow'],
+};
+const sfxBufs = {}; // file → AudioBuffer (decoded via fetch; needs http://)
+const sfxEls  = {}; // file → <audio> fallback when opened as file:// (fetch is blocked there; no stereo panning)
+
+function loadSfxFiles() {
+  for (const f of new Set(Object.values(SFX_FILES).flat())) {
+    const url = SFX_DIR + f + '.wav';
+    fetch(url)
+      .then(r => { if (!r.ok) throw new Error(r.status); return r.arrayBuffer(); })
+      .then(b => audio.ctx.decodeAudioData(b))
+      .then(buf => { sfxBufs[f] = buf; })
+      .catch(() => {
+        const el = new Audio(url);
+        el.preload = 'auto';
+        el.addEventListener('canplaythrough', () => { sfxEls[f] = el; }, { once: true });
+      });
+  }
+}
+
 // Play a sound. With (x, y) it's positional: quieter with distance, muffled behind walls, panned left/right.
 function sfx(name, x, y) {
   const c = audio.ctx, s = SFX[name];
@@ -323,20 +365,35 @@ function sfx(name, x, y) {
   const now = performance.now();
   if (s.gap && now - (audio.last[name] || 0) < s.gap) return;
   audio.last[name] = now;
-  let out = audio.sfx;
+  let vol = 1, pan = 0;
   if (x !== undefined) {
     const rx = x - player.x, ry = y - player.y, d = Math.hypot(rx, ry);
     if (d > 24) return;
-    const g = c.createGain();
-    g.gain.value = (hasLOS(player.x, player.y, x, y) ? 1 : 0.45) / (1 + d * 0.18);
-    out = g;
-    if (c.createStereoPanner && d > 0.3) {
-      const p = c.createStereoPanner();
-      p.pan.value = Math.max(-1, Math.min(1, (rx * player.planeX + ry * player.planeY) / (FOV_PLANE * d))) * 0.8;
-      g.connect(p).connect(audio.sfx);
-    } else g.connect(audio.sfx);
+    vol = (hasLOS(player.x, player.y, x, y) ? 1 : 0.45) / (1 + d * 0.18);
+    if (d > 0.3) pan = Math.max(-1, Math.min(1, (rx * player.planeX + ry * player.planeY) / (FOV_PLANE * d))) * 0.8;
   }
-  s.play(out, c.currentTime + 0.005);
+  const ready = (SFX_FILES[name] || []).filter(f => sfxBufs[f] || sfxEls[f]);
+  const file = ready[Math.random() * ready.length | 0];
+  if (file && !sfxBufs[file]) {
+    const el = sfxEls[file].cloneNode();
+    el.volume = Math.min(1, vol * SFX_FILE_VOL * audio.master.gain.value);
+    el.play().catch(() => {});
+    return;
+  }
+  const g = c.createGain();
+  g.gain.value = vol * (file ? SFX_FILE_VOL : 1);
+  if (pan && c.createStereoPanner) {
+    const p = c.createStereoPanner();
+    p.pan.value = pan;
+    g.connect(p).connect(audio.sfx);
+  } else g.connect(audio.sfx);
+  const t = c.currentTime + 0.005;
+  if (!file) { s.play(g, t); return; }
+  const src = c.createBufferSource();
+  src.buffer = sfxBufs[file];
+  src.playbackRate.value = 0.94 + Math.random() * 0.12; // slight pitch variation, like Doom
+  src.connect(g);
+  src.start(t);
 }
 
 // Voice lines (the player character). Each event lists [file, subtitle] variants, loaded from
@@ -870,9 +927,11 @@ function damageEnemy(e, dmg, now) {
     sfx(e.type + '_die', e.x, e.y);
     say('kill');
     if (e.bossAdd) {
-      // Boss adds always pay out, so the fight keeps you supplied
-      if (Math.random() < 0.35) pickups.push({ kind: 'closures', x: e.x, y: e.y });
-      else pickups.push({ kind: 'tickets', x: e.x, y: e.y, amount: 6 });
+      // Shadow IT always drops coffee and closures, side by side (across your line of sight), so the fight keeps you supplied
+      const sx = -player.dirY * 0.25, sy = player.dirX * 0.25;
+      const spot = (x, y) => isWall(x, y) ? { x: e.x, y: e.y } : { x, y };
+      pickups.push({ kind: 'coffee',   ...spot(e.x - sx, e.y - sy) });
+      pickups.push({ kind: 'closures', ...spot(e.x + sx, e.y + sy) });
     } else if (Math.random() < 0.6) {
       pickups.push({ kind: 'tickets', x: e.x, y: e.y, amount: 4 });
     }
@@ -1240,6 +1299,7 @@ function updateProjectiles(now) {
       if (++p.age % 4 === 0) addEffect(p.x, p.y, 0.3, TEX.nxGlow, 0.1, 240, 0.02);
       if (isWall(p.x, p.y) || p.age > NX_LIFE) {
         addEffect(p.x, p.y, 0.25, TEX.nxGlow, 0.35, 260, 0);
+        sfx('nx_hit', p.x, p.y);
         projectiles.splice(i, 1);
       } else if (Math.hypot(player.x - p.x, player.y - p.y) < 0.4) {
         hurtPlayer(p.dmg, p.sx, p.sy, 'dns');
@@ -1845,6 +1905,8 @@ function drawTitle() {
   ctx.font = '10px monospace';
   ctx.fillStyle = '#666';
   ctx.fillText(`click the screen to capture the mouse   ·   sound ${audio.muted ? 'OFF' : 'ON'} [N]`, cx, 432);
+  ctx.fillStyle = '#4a4a4a';
+  ctx.fillText('Sound effects from Freedoom (freedoom.github.io), BSD license', cx, 476);
   ctx.textAlign = 'left';
   ctx.textBaseline = 'alphabetic';
 }

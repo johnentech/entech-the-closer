@@ -123,6 +123,18 @@ Working title: **DNS: The Reckoning**. Player is an IT tech who fights office eq
   - `doorLocked(DOOR)` is now `!game.switchOn || game.bossTriggered`. Before the switch, the boss door says "LOCKED — FIND THE OVERRIDE SWITCH IN THE SERVER RACKS" with the `locked_core` voice line. Its lock light stays red until the switch is flipped.
   - Order of play: IT Closet (cannon) → security doors → Server Room fight → switch → boss door → arena.
 
+### Freedoom sound effects + Shadow IT loot ✅
+- The user wanted Doom's sounds. Original Doom audio is copyrighted (id/ZeniMax), so we use **Freedoom's** BSD-licensed replacements, which are made to sound like Doom. 22 WAVs from github.com/freedoom/freedoom `sounds/` live in **`sounds/sfx/`**, next to `FREEDOOM-LICENSE.adoc` (keep it with the game) and `CREDITS.md` (which sound plays where). The title screen shows a credit line.
+- **`SFX_FILES`** maps game sound names to files:
+  - Keyboard → shotgun; Closing Cannon → rocket launcher + barrel explosion.
+  - Printer, Router and Shadow IT → imp sight/active/pain/death, fireball for ranged attacks, claw for melee.
+  - The DNS → cacodemon sight/active/pain/death, fireball volley, with a new `nx_hit` sound on NXDOMAIN impacts.
+  - Doors, locked "no way", switch and pickups use their Freedoom sounds too.
+  - Unmapped or missing sounds fall back to the synthesized `SFX` versions. The title, stamp, typing, phase alarm, hurt and UPS beep are still synthesized.
+- Loading (`loadSfxFiles()`, on the first `ensureAudio()`): over http the files are fetched and decoded into AudioBuffers, so positional volume, stereo pan and a ±6% Doom-style pitch variation all work. When `index.html` is opened as `file://`, fetch is blocked, so it falls back to cloned `<audio>` elements: volume only, no panning. `SFX_FILE_VOL` sets the overall level.
+- **Shadow IT** (boss adds) now always drops **coffee (+20 SLA) and closures (+3)**, placed side by side across your line of sight. This replaces the old 65% tickets / 35% closures roll.
+- Verified: all 22 files decode and play through `sfx()` with no errors, and drops spawn correctly. **Not checked by ear.**
+
 ---
 
 ## Running / testing
