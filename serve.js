@@ -7,7 +7,7 @@ const PORT = 5180;
 const ROOT = __dirname;
 const TYPES = {
   '.html': 'text/html', '.js': 'text/javascript', '.css': 'text/css', '.png': 'image/png', '.json': 'application/json',
-  '.mp3': 'audio/mpeg', '.wav': 'audio/wav', '.ogg': 'audio/ogg', '.md': 'text/markdown',
+  '.mp3': 'audio/mpeg', '.wav': 'audio/wav', '.ogg': 'audio/ogg', '.md': 'text/markdown', '.webp': 'image/webp',
 };
 
 http.createServer((req, res) => {

@@ -449,6 +449,7 @@ function stopVoice() {
   voice.priority = -1;
   voice.subUntil = 0;
   if (audio.sfx) audio.sfx.gain.setTargetAtTime(1, audio.ctx.currentTime, 0.1);
+  if (music.duck) music.duck.gain.setTargetAtTime(1, audio.ctx.currentTime, 0.1);
 }
 
 // Fire a voice event; returns true if a line started
@@ -477,7 +478,159 @@ function say(event) {
     voice.subUntil = now + (isFinite(clip.el.duration) ? clip.el.duration * 1000 : 2500) + 500;
   } else voice.subUntil = 0;
   if (audio.sfx) audio.sfx.gain.setTargetAtTime(0.55, audio.ctx.currentTime, 0.05); // duck effects under the voice
+  if (music.duck) music.duck.gain.setTargetAtTime(0.5, audio.ctx.currentTime, 0.05);  // …and the music
   return true;
+}
+
+// --- Music: synthesized metal loops (no files) ---
+// title: an original Doom-style riff (palm-muted gallop on low E, power-chord hits), opening with four slammed
+//        chords timed to the logo landing. game: a slower, darker, quieter loop under gameplay.
+// Bars are 16 sixteenth-notes. Guitar tokens: '.' rest, 'x' palm-muted chug on low E, '-' hold the previous chord,
+// or a power-chord root ('G2', 'F#2', …). Drum lines: 'x' = hit on that sixteenth.
+const NOTE = { E2: 82.41, 'F#2': 92.5, G2: 98.0, A2: 110.0, Bb2: 116.54, B2: 123.47, C3: 130.81, D3: 146.83, E3: 164.81 };
+const bar = s => s.trim().split(/\s+/);
+const TRACKS = {
+  title: {
+    bpm: 168, intro: 2, tone: 2600, // first `intro` bars play once, the rest loop; tone = guitar brightness (lowpass Hz)
+    gtr: [
+      'E2 - - . E2 - - . E2 - - . E2 - - .',   // DUN  DUN  DUN  DUN
+      'G2 - - - - - - - F#2 - - - - - - -',
+      'x . x x x . x x x . x x G2 - F#2 -',
+      'x . x x x . x x D3 - E3 - C3 - - -',
+      'x . x x x . x x x . x x A2 - Bb2 -',
+      'x . x x x . x x B2 - - - E2 - E2 -',
+    ].map(bar),
+    kick:  ['x...x...x...x...', 'x.......x.......', 'x.xxx.xxx.xxx.x.', 'x.xxx.xxx.x.x...', 'x.xxx.xxx.xxx.x.', 'x.xxx.xxx...x.x.'],
+    snare: ['................', '............xxxx', '....x.......x...', '....x.......x...', '....x.......x...', '....x.......x.x.'],
+    hat:   ['................', '................', 'x.x.x.x.x.x.x.x.', 'x.x.x.x.x.x.x.x.', 'x.x.x.x.x.x.x.x.', 'x.x.x.x.x.x.x.x.'],
+    crash: ['x...x...x...x...', 'x...............', 'x...............', '................', '................', '............x...'],
+  },
+  game: {
+    bpm: 112, intro: 0, tone: 1100, // muffled, so it sits under the effects and voice
+    gtr: [
+      'x . . . x . . . x . x . G2 - - -',
+      'x . . . x . . . x . x . F#2 - - -',
+      'C3 - - - - - - - x . . . x . x .',
+      'D3 - - - - - - - x . x . B2 - - -',
+      'x . . . x . . . x . x . A2 - - -',
+      'x . . . x . . . x . x . Bb2 - - -',
+      'C3 - - - - - - - B2 - - - - - - -',
+      'x . x . x . x . x x x x E2 - - -',
+    ].map(bar),
+    kick:  ['x.......x.x.....', 'x.......x.x.....', 'x.......x.......', 'x.......x.......', 'x.......x.x.....', 'x.......x.x.....', 'x.......x.......', 'x.x.x.x.x.x.x...'],
+    snare: ['....x.......x...', '....x.......x...', '....x.......x...', '....x.......x...', '....x.......x...', '....x.......x...', '....x.......x...', '....x.......x.xx'],
+    hat:   Array(8).fill('x.x.x.x.x.x.x.x.'),
+    crash: ['x...............', '................', '................', '................', 'x...............', '................', '................', '................'],
+  },
+};
+const MUSIC_VOL = { title: 0.5, game: 0.2 };
+const music = { bus: null, duck: null, curve: null, name: null, track: null, step: 0, nextAt: 0, timer: 0 };
+
+// Switch tracks (null fades out). lead = seconds until the first note (the title's first chord lands with the logo).
+function playMusic(name, lead = 0.05) {
+  const c = audio.ctx;
+  if (!c) return;
+  if (!music.bus) {
+    music.bus = c.createGain();
+    music.bus.gain.value = 0;
+    music.duck = c.createGain(); // ducked under voice lines
+    music.bus.connect(music.duck).connect(audio.master);
+    const n = 2048, k = 60;
+    music.curve = new Float32Array(n);
+    for (let i = 0; i < n; i++) { const x = i * 2 / n - 1; music.curve[i] = (3 + k) * x * 20 * Math.PI / 180 / (Math.PI + k * Math.abs(x)); }
+  }
+  if (name === music.name) return;
+  music.name = name;
+  const now = c.currentTime, g = music.bus.gain;
+  g.cancelScheduledValues(now);
+  g.setValueAtTime(g.value, now);
+  if (!name) { g.linearRampToValueAtTime(0, now + 1.5); music.track = null; return; }
+  music.track = TRACKS[name]; // the old track simply stops being scheduled
+  music.step = 0;
+  music.nextAt = now + lead;
+  g.linearRampToValueAtTime(MUSIC_VOL[name], now + Math.max(0.05, Math.min(0.3, lead)));
+  if (!music.timer) music.timer = setInterval(scheduleMusic, 40);
+}
+
+// Look-ahead scheduler: queue every sixteenth that starts within the next 0.25 s
+function scheduleMusic() {
+  const c = audio.ctx, T = music.track;
+  if (!c || !T) return;
+  const sd = 60 / T.bpm / 4;
+  if (music.nextAt < c.currentTime - 0.1) music.nextAt = c.currentTime + 0.05; // tab was asleep: don't burst-play the backlog
+  while (music.nextAt < c.currentTime + 0.25) {
+    const bars = T.gtr.length;
+    let b = music.step >> 4;
+    if (b >= bars) b = T.intro + (b - T.intro) % (bars - T.intro);
+    if (!audio.muted) musicStep(T, b, music.step & 15, music.nextAt, sd);
+    music.step++;
+    music.nextAt += sd;
+  }
+}
+
+function musicStep(T, b, s, t, sd) {
+  const g = T.gtr[b][s], out = music.bus;
+  if (g === 'x') { guitar(t, NOTE.E2, sd, true, T.tone); bassNote(t, NOTE.E2 / 2, sd, true); }
+  else if (NOTE[g]) {
+    let len = 1;
+    while (s + len < 16 && T.gtr[b][s + len] === '-') len++;
+    guitar(t, NOTE[g], len * sd, false, T.tone);
+    bassNote(t, NOTE[g] / 2, len * sd, false);
+  }
+  if (T.kick[b][s] === 'x')  tone(out, t, { type: 'sine', f0: 150, f1: 42, ms: 160, vol: 0.9 });
+  if (T.snare[b][s] === 'x') { noise(out, t, { ms: 170, vol: 0.45, f0: 1900, q: 0.8 }); tone(out, t, { type: 'triangle', f0: 200, f1: 150, ms: 90, vol: 0.25 }); }
+  if (T.hat[b][s] === 'x')   noise(out, t, { ms: 35, vol: 0.1, f0: 8000, filter: 'highpass' });
+  if (T.crash[b][s] === 'x') noise(out, t, { ms: 1400, vol: 0.25, f0: 5000, filter: 'highpass' });
+}
+
+// Distorted power chord (root + fifth + octave), or a palm-muted chug (root + fifth, short and darker).
+// Each note is a detuned saw pair into a waveshaper, then a lowpass "cabinet".
+function guitar(t, f, dur, muted, tone) {
+  const c = audio.ctx, end = t + dur;
+  const sh = c.createWaveShaper(), lp = c.createBiquadFilter(), env = c.createGain();
+  sh.curve = music.curve;
+  sh.oversample = '2x';
+  lp.type = 'lowpass';
+  lp.frequency.value = muted ? tone * 0.55 : tone;
+  env.gain.setValueAtTime(0.0001, t);
+  env.gain.exponentialRampToValueAtTime(0.16, t + 0.004);
+  env.gain.setTargetAtTime(muted ? 0 : 0.09, t + 0.01, muted ? 0.035 : 0.15);
+  if (!muted) env.gain.setTargetAtTime(0, end, 0.04);
+  sh.connect(lp).connect(env).connect(music.bus);
+  for (const fr of muted ? [f, f * 1.5] : [f, f * 1.5, f * 2]) {
+    for (const det of [-7, 7]) {
+      const o = c.createOscillator(), pre = c.createGain();
+      o.type = 'sawtooth';
+      o.frequency.value = fr;
+      o.detune.value = det;
+      pre.gain.value = 0.6;
+      o.connect(pre).connect(sh);
+      o.start(t);
+      o.stop(end + 0.3);
+    }
+  }
+}
+
+function bassNote(t, f, dur, muted) {
+  const c = audio.ctx, o = c.createOscillator(), lp = c.createBiquadFilter(), env = c.createGain();
+  o.type = 'square';
+  o.frequency.value = f;
+  lp.type = 'lowpass';
+  lp.frequency.value = 320;
+  env.gain.setValueAtTime(0.0001, t);
+  env.gain.exponentialRampToValueAtTime(0.22, t + 0.005);
+  env.gain.setTargetAtTime(muted ? 0 : 0.15, t + 0.01, muted ? 0.05 : 0.2);
+  if (!muted) env.gain.setTargetAtTime(0, t + dur, 0.04);
+  o.connect(lp).connect(env).connect(music.bus);
+  o.start(t);
+  o.stop(t + dur + 0.3);
+}
+
+// Which track should be playing right now
+function syncMusic() {
+  if (!audio.ctx || audio.ctx.state !== 'running') return;
+  const want = !game.started ? (title.stage === 'gate' ? null : 'title') : (game.over || game.won) ? null : 'game';
+  if (want !== music.name) playMusic(want);
 }
 
 // --- Textures (procedural, drawn once into offscreen canvases) ---
@@ -1537,13 +1690,159 @@ function onEmpty(dryFire) {
   say(w.voiceEmpty);
 }
 
+// --- Title screen ---
+// Stages: 'gate' (black "press any key", needed because browsers only allow sound after a key/click)
+//      → 'intro' (THE CLOSER drops in and slams down on the first chord of the title riff)
+//      → 'ready' ("press any key to start", logo glints every few seconds) → game.
+const title = { stage: 'gate', at: 0, landed: false, shake: 0 };
+const LOGO_DROP_MS   = 420;  // logo fall time; the riff's first chord is scheduled to land with it
+const INTRO_READY_MS = 1500; // after the key press, when "press any key to start" appears
+const GLINT_EVERY_MS = 4000, GLINT_MS = 700;
+
+// The art (1448×1086) fills the top 470 px, centered; blurred copies of it fill the side bars.
+// The bottom 30 px band holds the prompt. Feature boxes below are in art pixels, found from the image's colors.
+const ART_W = 1448, ART_H = 1086, ART_SCALE = 470 / ART_H, ART_X = (SCREEN_W - ART_W * ART_SCALE) / 2;
+const ART_ANCHOR    = [724, 520];                          // push-in zooms around the character
+const ART_LIGHTS    = [[508, 48, 96, 48], [864, 48, 92, 48], [552, 164, 76, 40], [836, 164, 76, 40]];
+const ART_DYING     = 2;                                   // which ceiling light is the dying tube
+const ART_STRIPE    = [374, 290, 600, 32];                 // red stripe on the back wall
+const ART_MONITORS  = [[160, 392, 112, 124], [0, 320, 64, 160]];
+const ART_RACKS     = [940, 40, 508, 600];                 // server racks (LEDs are found inside)
+const ART_LOGO      = [100, 690, 1262, 372];               // "THE CLOSER"
+const titleArt = { img: new Image(), ready: false, fx: false, sides: null, bg: null, logo: null, logoSmall: null,
+                   glint: null, stripe: null, stripeGlow: null, lights: [], lightsOff: [], screens: [], leds: [] };
+
+titleArt.img.onload = () => {
+  titleArt.ready = true;
+  titleArt.sides = makeTex(SCREEN_W, SCREEN_H, g => {
+    g.filter = 'blur(14px) brightness(0.35)';
+    g.drawImage(titleArt.img, -40, -20, SCREEN_W + 80, 470 + 40);
+  });
+  // Masks need the image's pixels; opened as file:// the canvas is "tainted" and this throws.
+  // Then the art still shows, just without the masked effects (the logo punches in instead of dropping).
+  try { prepTitleFx(); titleArt.fx = true; } catch (e) {}
+};
+titleArt.img.src = 'art/title.webp';
+
+function prepTitleFx() {
+  const src = makeTex(ART_W, ART_H, g => g.drawImage(titleArt.img, 0, 0));
+  const D = src.getContext('2d').getImageData(0, 0, ART_W, ART_H).data; // throws if tainted
+  // Copy the pixels of a box that pass `pred` (others transparent); returns { c: canvas, x, y }
+  const cut = ([x0, y0, w, h], pred) => {
+    const c = makeTex(w, h, () => {}), g = c.getContext('2d'), out = g.createImageData(w, h);
+    for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) {
+      const i = ((y0 + y) * ART_W + x0 + x) * 4, o = (y * w + x) * 4;
+      if (pred(D[i], D[i + 1], D[i + 2], x0 + x, y0 + y)) { out.data[o] = D[i]; out.data[o + 1] = D[i + 1]; out.data[o + 2] = D[i + 2]; out.data[o + 3] = 255; }
+    }
+    g.putImageData(out, 0, 0);
+    return { c, x: x0, y: y0 };
+  };
+
+  // Logo: saturated gold/red, or the dark navy letter tops; then close small holes (dilate + erode, radius 2)
+  const [lx, ly, lw, lh] = ART_LOGO, raw = new Uint8Array(lw * lh);
+  for (let y = 0; y < lh; y++) for (let x = 0; x < lw; x++) {
+    const i = ((ly + y) * ART_W + lx + x) * 4, R = D[i], G = D[i + 1], B = D[i + 2], mx = Math.max(R, G, B), mn = Math.min(R, G, B);
+    raw[y * lw + x] = (mx - mn > 55 && mx > 70) || (B > R + 25 && B > G + 10 && B > 45) ? 1 : 0;
+  }
+  const morph = (m, grow) => {
+    const o = new Uint8Array(m.length);
+    for (let y = 0; y < lh; y++) for (let x = 0; x < lw; x++) {
+      let v = grow ? 0 : 1;
+      for (let dy = -2; dy <= 2 && v === (grow ? 0 : 1); dy++) for (let dx = -2; dx <= 2; dx++) {
+        const xx = x + dx, yy = y + dy, s = xx >= 0 && yy >= 0 && xx < lw && yy < lh ? m[yy * lw + xx] : 0;
+        if (grow ? s : !s) { v = grow ? 1 : 0; break; }
+      }
+      o[y * lw + x] = v;
+    }
+    return o;
+  };
+  const mask = morph(morph(raw, true), false);
+  titleArt.logo = cut(ART_LOGO, (R, G, B, x, y) => mask[(y - ly) * lw + x - lx]);
+  // Glint source: the logo at screen resolution
+  titleArt.logoSmall = makeTex(Math.ceil(lw * ART_SCALE), Math.ceil(lh * ART_SCALE), g => g.drawImage(titleArt.logo.c, 0, 0, Math.ceil(lw * ART_SCALE), Math.ceil(lh * ART_SCALE)));
+  titleArt.glint = makeTex(titleArt.logoSmall.width, titleArt.logoSmall.height, () => {});
+  // The art with the logo cut out (shown, dimmed, while the logo falls into place)
+  titleArt.bg = makeTex(ART_W, ART_H, g => {
+    const img = g.createImageData(ART_W, ART_H);
+    img.data.set(D);
+    for (let y = 0; y < lh; y++) for (let x = 0; x < lw; x++) {
+      if (!mask[y * lw + x]) continue;
+      const i = ((ly + y) * ART_W + lx + x) * 4;
+      img.data[i] = 28; img.data[i + 1] = 25; img.data[i + 2] = 22; // dark floor
+    }
+    g.putImageData(img, 0, 0);
+  });
+
+  titleArt.stripe  = cut(ART_STRIPE, (R, G, B) => R > 35 && R > G * 2.5 && R > B * 3);
+  titleArt.lights  = ART_LIGHTS.map(box => cut(box, (R, G, B) => 0.3 * R + 0.59 * G + 0.11 * B > 120));
+  titleArt.screens = ART_MONITORS.map(box => cut(box, (R, G, B) => B > 110 && B > R + 40));
+  // Solid-color copies of a cut-out (same shape): a bright red stripe to pulse additively, dark panels for the dying tube
+  const tinted = (m, color) => ({ x: m.x, y: m.y, c: makeTex(m.c.width, m.c.height, g => {
+    g.drawImage(m.c, 0, 0);
+    g.globalCompositeOperation = 'source-in';
+    g.fillStyle = color;
+    g.fillRect(0, 0, m.c.width, m.c.height);
+  }) });
+  titleArt.stripeGlow = tinted(titleArt.stripe, '#ff2a1a').c;
+  titleArt.lightsOff  = titleArt.lights.map(L => tinted(L, '#15130f'));
+
+  // Rack LEDs: bright green/blue clusters on a 2 px grid → small boxes that blink independently
+  const [rx, ry, rw, rh] = ART_RACKS, S = 2, GW = rw / S | 0, GH = rh / S | 0, on = new Uint8Array(GW * GH), seen = new Uint8Array(GW * GH);
+  for (let j = 0; j < GH; j++) for (let i = 0; i < GW; i++) {
+    const p = ((ry + j * S) * ART_W + rx + i * S) * 4, R = D[p], G = D[p + 1], B = D[p + 2];
+    on[j * GW + i] = (G > 150 && G > R + 60 && G > B) || (B > 170 && B > R + 70) ? 1 : 0;
+  }
+  for (let k = 0; k < on.length; k++) {
+    if (!on[k] || seen[k]) continue;
+    let x0 = 1e9, y0 = 1e9, x1 = -1, y1 = -1;
+    const st = [k];
+    seen[k] = 1;
+    while (st.length) {
+      const q = st.pop(), i = q % GW, j = q / GW | 0;
+      x0 = Math.min(x0, i); y0 = Math.min(y0, j); x1 = Math.max(x1, i); y1 = Math.max(y1, j);
+      for (const n of [q - 1, q + 1, q - GW, q + GW]) if (n >= 0 && n < on.length && on[n] && !seen[n] && Math.abs((n % GW) - i) <= 1) { seen[n] = 1; st.push(n); }
+    }
+    const p = ((ry + y0 * S) * ART_W + rx + x0 * S) * 4;
+    titleArt.leds.push({ x: rx + x0 * S - 1, y: ry + y0 * S - 1, w: (x1 - x0 + 1) * S + 2, h: (y1 - y0 + 1) * S + 2,
+                         color: `rgb(${D[p]},${D[p + 1]},${D[p + 2]})`, seed: Math.random() * 1000 });
+  }
+}
+
+// Any key / click while the title is up
+function advanceTitle() {
+  const now = performance.now();
+  if (title.stage === 'gate') {
+    title.stage = 'intro';
+    title.at = now;
+    ensureAudio();
+    playMusic('title', LOGO_DROP_MS / 1000);
+  } else if (title.stage === 'intro') {
+    title.at = now - INTRO_READY_MS; // impatient: skip to "press any key to start"
+    title.landed = true;
+    title.stage = 'ready';
+  } else {
+    startGame();
+  }
+}
+
+function updateTitle(now) {
+  title.shake = title.shake < 0.3 ? 0 : title.shake * 0.85;
+  if (title.stage === 'intro' && !title.landed && now - title.at >= LOGO_DROP_MS) {
+    title.landed = true;
+    title.shake = 16;
+    sfx('slam');
+    sfx('explosion');
+  }
+  if (title.stage === 'intro' && now - title.at >= INTRO_READY_MS) title.stage = 'ready';
+}
+
 // --- Title / restart ---
 // quiet = restarting from R: no gesture yet, so no start jingle (audio resumes on the next key/click)
 function startGame(quiet) {
   if (game.started) return;
   game.started = true;
   game.startAt = performance.now();
-  Object.assign(player, { dirX: 1, dirY: 0, planeX: 0, planeY: FOV_PLANE }); // undo the title screen's slow pan
+  title.stage = 'done';
   if (quiet) return;
   ensureAudio();
   sfx('start');
@@ -1577,7 +1876,7 @@ document.addEventListener('keydown', e => {
   ensureAudio();
   if (e.code === 'Enter' && e.altKey) { toggleFullscreen(); return; }
   if (e.code === 'KeyN') { toggleMute(); return; }
-  if (!game.started) { if (!e.repeat) startGame(); return; } // any key starts
+  if (!game.started) { if (!e.repeat) advanceTitle(); return; }
   if (e.code === 'KeyM') showMap = !showMap;
   if (e.code === 'Space') shoot();
   if (e.code === 'Digit1') switchWeapon('keyboard');
@@ -1594,7 +1893,11 @@ let mouseDX = 0;
 canvas.addEventListener('mousedown', e => {
   ensureAudio();
   if (e.button !== 0 || game.over || game.won) return;
-  if (!game.started) startGame();
+  if (!game.started) {
+    const starting = title.stage === 'ready';
+    advanceTitle();
+    if (!starting) return; // only the click that starts the game grabs the mouse
+  }
   if (document.pointerLockElement !== canvas) canvas.requestPointerLock()?.catch?.(() => {}); // embedded previews may refuse
   else shoot();
 });
@@ -1753,7 +2056,8 @@ function update() {
   game.shake     = game.shake < 0.3 ? 0 : game.shake * 0.82;
   const t0 = performance.now();
   updateEffects(t0);
-  if (!game.started) { rotate(0.0025); return; } // title screen: slow pan around the office
+  syncMusic();
+  if (!game.started) { updateTitle(t0); return; }
   if (game.over) {
     if (!game.stamped && t0 - game.overAt >= STAMP_AT) { game.stamped = true; game.shake = 10; sfx('stamp'); }
     return;
@@ -2113,6 +2417,7 @@ function drawFloorAndCeiling() {
 
 // --- Render ---
 function render() {
+  if (!game.started) { drawTitle(); drawSubtitles(); return; }
   // Screen shake offsets the 3D view and weapon; HUD stays put
   ctx.fillStyle = '#000';
   ctx.fillRect(0, 0, SCREEN_W, SCREEN_H);
@@ -2159,13 +2464,6 @@ function render() {
 
   drawSprites();
 
-  if (!game.started) {
-    ctx.restore();
-    drawTitle();
-    drawSubtitles();
-    return;
-  }
-
   // Weapon + HUD + minimap (drawn in order so minimap is on top)
   if (!game.over) drawWeapon();
   drawKeycaps();
@@ -2203,81 +2501,157 @@ function drawSubtitles() {
   ctx.textBaseline = 'alphabetic';
 }
 
+// Title screen: the art with animated overlays (stages, timings and feature boxes are in the Title screen section)
 function drawTitle() {
-  const now = performance.now(), cx = SCREEN_W / 2;
-  ctx.fillStyle = 'rgba(0,0,0,0.62)';
+  const now = performance.now(), cx = SCREEN_W / 2, t = now - title.at;
+  ctx.fillStyle = '#000';
   ctx.fillRect(0, 0, SCREEN_W, SCREEN_H);
-  ctx.fillStyle = 'rgba(0,0,0,0.25)'; // scanlines
-  for (let y = 0; y < SCREEN_H; y += 3) ctx.fillRect(0, y, SCREEN_W, 1);
   ctx.textAlign = 'center';
   ctx.textBaseline = 'middle';
 
-  // Title with an RGB split that jitters now and then
-  ctx.font = 'bold 22px monospace';
-  ctx.fillStyle = '#2aa4ff'; // bright blue
-  ctx.fillText('E N T E C H :', cx, 82);
-  const g = Math.random() < 0.06 ? (Math.random() - 0.5) * 12 : 0;
-  ctx.font = 'bold 58px monospace';
-  ctx.fillStyle = 'rgba(255,40,80,0.8)';
-  ctx.fillText('THE CLOSER', cx - 3 + g, 130);
-  ctx.fillStyle = 'rgba(60,230,255,0.8)';
-  ctx.fillText('THE CLOSER', cx + 3 - g, 130);
-  ctx.fillStyle = '#f0f0f0';
-  ctx.fillText('THE CLOSER', cx, 130);
-  ctx.font = 'italic 14px monospace';
-  ctx.fillStyle = '#a090c0';
-  ctx.fillText("It's always DNS.", cx, 172);
-
-  // Terminal teaser
-  const TX = cx - 230, TY = 198;
-  ctx.fillStyle = 'rgba(0,10,4,0.85)';
-  ctx.fillRect(TX, TY, 460, 66);
-  ctx.strokeStyle = '#1d4a2a';
-  ctx.lineWidth = 1;
-  ctx.strokeRect(TX + 0.5, TY + 0.5, 459, 65);
-  ctx.textAlign = 'left';
-  ctx.font = '12px monospace';
-  ctx.fillStyle = '#e8e8e8';
-  ctx.fillText('C:\\> nslookup intranet.corp', TX + 12, TY + 15);
-  ctx.fillStyle = '#ff5060';
-  ctx.fillText(';; connection timed out; no servers could be reached', TX + 12, TY + 33);
-  ctx.fillStyle = '#e8e8e8';
-  ctx.fillText('C:\\> ' + ((now / 500 | 0) % 2 ? '_' : ''), TX + 12, TY + 51);
-
-  // Controls
-  const CONTROLS = [
-    ['WASD', 'move',          'CLICK / SPACE', 'fire'],
-    ['← → / MOUSE', 'turn',   '1 / 2 / Q / WHEEL', 'switch weapon'],
-    ['E', 'open doors',       'F', 'flush DNS cache'],
-    ['M', 'map',              'N', 'sound on/off'],
-    ['ALT+ENTER', 'fullscreen', '', ''],
-  ];
-  ctx.font = '11px monospace';
-  CONTROLS.forEach(([k1, a1, k2, a2], i) => {
-    const y = 296 + i * 18;
-    ctx.textAlign = 'right';
-    ctx.fillStyle = '#3dff73';
-    ctx.fillText(k1, cx - 150, y);
-    ctx.fillText(k2, cx + 110, y);
-    ctx.textAlign = 'left';
-    ctx.fillStyle = '#9a9a9a';
-    ctx.fillText(a1, cx - 140, y);
-    ctx.fillText(a2, cx + 120, y);
-  });
-
-  ctx.textAlign = 'center';
-  if ((now / 450 | 0) % 2 === 0) {
+  // Gate: a black screen asking for the key press that unlocks sound
+  if (title.stage === 'gate' || !titleArt.ready) {
     ctx.font = 'bold 18px monospace';
+    ctx.fillStyle = '#2aa4ff';
+    ctx.fillText('E N T E C H', cx, HALF_H - 40);
+    if ((now / 600 | 0) % 2 === 0) {
+      ctx.font = 'bold 16px monospace';
+      ctx.fillStyle = '#e8e8e8';
+      ctx.fillText(titleArt.ready ? 'CLICK OR PRESS ANY KEY' : 'LOADING…', cx, HALF_H + 4);
+    }
+    ctx.font = '11px monospace';
+    ctx.fillStyle = '#666';
+    ctx.fillText(`sound ${audio.muted ? 'OFF' : 'ON'} [N]`, cx, HALF_H + 34);
+    ctx.textAlign = 'left';
+    ctx.textBaseline = 'alphabetic';
+    return;
+  }
+
+  const landed = t >= LOGO_DROP_MS, fx = titleArt.fx, [ax, ay] = ART_ANCHOR;
+  // Without masks (file://) the whole art punches in instead of the logo dropping
+  const punch = !fx && !landed ? 0.15 * (1 - t / LOGO_DROP_MS) : 0;
+  const zoom = 1 + 0.04 * (0.5 - 0.5 * Math.cos(now / 20000 * Math.PI)) + punch; // slow push-in and back, 40 s
+  const artSpace = () => {
+    if (title.shake) ctx.translate((Math.random() * 2 - 1) * title.shake, (Math.random() * 2 - 1) * title.shake);
+    ctx.translate(ART_X, 0);
+    ctx.scale(ART_SCALE, ART_SCALE);
+    ctx.beginPath();
+    ctx.rect(0, 0, ART_W, ART_H);
+    ctx.clip();
+    ctx.translate(ax, ay);
+    ctx.scale(zoom, zoom);
+    ctx.translate(-ax, -ay);
+  };
+
+  ctx.drawImage(titleArt.sides, 0, 0);
+  ctx.save();
+  artSpace();
+  ctx.drawImage(fx && !landed ? titleArt.bg : titleArt.img, 0, 0);
+  if (fx && landed) drawTitleFx(now, t);
+  if (landed) {
+    // ENTECH, just above the logo
+    ctx.globalAlpha = Math.min(1, Math.max(0, (t - LOGO_DROP_MS - 300) / 400));
+    ctx.font = 'bold 50px monospace';
+    ctx.lineJoin = 'round';
+    ctx.lineWidth = 12;
+    ctx.strokeStyle = '#000';
+    ctx.strokeText('E N T E C H :', ax, 662);
+    ctx.fillStyle = '#2aa4ff';
+    ctx.fillText('E N T E C H :', ax, 662);
+    ctx.globalAlpha = 1;
+  }
+  ctx.restore();
+
+  // Dark until the logo lands, then the scene brightens
+  const dim = !landed ? 0.82 : Math.max(0, 0.82 * (1 - (t - LOGO_DROP_MS) / 700));
+  if (dim > 0) {
+    ctx.fillStyle = `rgba(0,0,0,${dim})`;
+    ctx.fillRect(0, 0, SCREEN_W, 470);
+  }
+  // The falling logo, drawn over the darkness (it accelerates down into its spot)
+  if (fx && !landed) {
+    const k = t / LOGO_DROP_MS, [lx, ly, , lh] = ART_LOGO;
+    ctx.save();
+    artSpace();
+    ctx.drawImage(titleArt.logo.c, lx, ly - (ly + lh) * (1 - k * k));
+    ctx.restore();
+  }
+  // Impact flash
+  if (landed && t < LOGO_DROP_MS + 350) {
+    ctx.fillStyle = `rgba(255,250,235,${0.85 * (1 - (t - LOGO_DROP_MS) / 350)})`;
+    ctx.fillRect(0, 0, SCREEN_W, SCREEN_H);
+  }
+
+  // Bottom band: prompt, sound status, credit
+  ctx.fillStyle = '#000';
+  ctx.fillRect(0, 470, SCREEN_W, SCREEN_H - 470);
+  ctx.fillStyle = '#1a1a1a';
+  ctx.fillRect(0, 470, SCREEN_W, 1);
+  if (title.stage === 'ready' && (now / 450 | 0) % 2 === 0) {
+    ctx.font = 'bold 15px monospace';
     ctx.fillStyle = '#3dff73';
-    ctx.fillText('PRESS ANY KEY TO START', cx, 400);
+    ctx.fillText('CLICK OR PRESS ANY KEY TO START', cx, 486);
   }
   ctx.font = '10px monospace';
-  ctx.fillStyle = '#666';
-  ctx.fillText(`click the screen to capture the mouse   ·   sound ${audio.muted ? 'OFF' : 'ON'} [N]`, cx, 432);
-  ctx.fillStyle = '#4a4a4a';
-  ctx.fillText('Sound effects from Freedoom (freedoom.github.io), BSD license', cx, 476);
+  ctx.fillStyle = '#555';
+  ctx.textAlign = 'left';
+  ctx.fillText(`sound ${audio.muted ? 'OFF' : 'ON'} [N]`, 10, 486);
+  ctx.textAlign = 'right';
+  ctx.fillText('SFX: Freedoom (BSD)', SCREEN_W - 10, 486);
   ctx.textAlign = 'left';
   ctx.textBaseline = 'alphabetic';
+}
+
+// Animated bits over the art (in art-pixel space): humming lights with a dying tube, pulsing red stripe,
+// flickering monitors, blinking rack LEDs, and a glint sweeping across the logo
+function drawTitleFx(now, t) {
+  ctx.globalCompositeOperation = 'lighter';
+  titleArt.lights.forEach((L, i) => {
+    ctx.globalAlpha = 0.12 + 0.06 * Math.sin(now * 0.05 + i * 1.7);
+    ctx.drawImage(L.c, L.x, L.y);
+  });
+  ctx.globalAlpha = 0.25 + 0.35 * (0.5 + 0.5 * Math.sin(now * 0.004));
+  ctx.drawImage(titleArt.stripeGlow, titleArt.stripe.x, titleArt.stripe.y);
+  titleArt.screens.forEach((S, i) => {
+    const blip = (now + i * 1300) % 3100 < 90 ? 0.4 : 0;
+    ctx.globalAlpha = 0.1 + Math.random() * 0.12 + blip;
+    ctx.drawImage(S.c, S.x, S.y);
+  });
+  // LEDs: every ~0.28 s each one rolls to go dark, flare, or stay as painted
+  for (const L of titleArt.leds) {
+    const r = (Math.imul((now / 280 + L.seed) | 0, 2654435761) >>> 0) % 100;
+    if (r < 22) { ctx.globalCompositeOperation = 'source-over'; ctx.globalAlpha = 0.85; ctx.fillStyle = '#05070a'; }
+    else if (r > 80) { ctx.globalCompositeOperation = 'lighter'; ctx.globalAlpha = 0.7; ctx.fillStyle = L.color; }
+    else continue;
+    ctx.fillRect(L.x, L.y, L.w, L.h);
+  }
+  // Dying tube: a stutter burst every ~5 s, plus the odd random drop-out
+  ctx.globalCompositeOperation = 'source-over';
+  if ((now % 5200 < 600 && Math.sin(now * 0.9) > 0) || Math.random() < 0.01) {
+    const D = titleArt.lightsOff[ART_DYING];
+    ctx.globalAlpha = 0.8;
+    ctx.drawImage(D.c, D.x, D.y);
+  }
+  // Glint: a bright diagonal band through the logo's own pixels, every GLINT_EVERY_MS once it's settled
+  const gp = (t - INTRO_READY_MS) % GLINT_EVERY_MS;
+  if (t > INTRO_READY_MS && gp < GLINT_MS) {
+    const G = titleArt.glint, g = G.getContext('2d'), w = G.width, h = G.height, bx = (gp / GLINT_MS) * 1.6 * w - 0.3 * w;
+    g.globalCompositeOperation = 'source-over';
+    g.clearRect(0, 0, w, h);
+    g.drawImage(titleArt.logoSmall, 0, 0);
+    g.globalCompositeOperation = 'source-in';
+    const grad = g.createLinearGradient(bx - 45, 0, bx + 45, 30);
+    grad.addColorStop(0, 'rgba(255,255,230,0)');
+    grad.addColorStop(0.5, 'rgba(255,255,230,0.9)');
+    grad.addColorStop(1, 'rgba(255,255,230,0)');
+    g.fillStyle = grad;
+    g.fillRect(0, 0, w, h);
+    ctx.globalCompositeOperation = 'lighter';
+    ctx.globalAlpha = 1;
+    ctx.drawImage(G, ART_LOGO[0], ART_LOGO[1], ART_LOGO[2], ART_LOGO[3]);
+  }
+  ctx.globalCompositeOperation = 'source-over';
+  ctx.globalAlpha = 1;
 }
 
 // TTL 0: random dark flickers and horizontal glitch tears
