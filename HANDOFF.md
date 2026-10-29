@@ -189,15 +189,17 @@ All procedural (64×64 canvases drawn once with `makeTex`, seeded by `rng()` + `
 - **Floors** (`FLOOR_SRC` → `FLOOR_TEX` pixel arrays, `FLOOR_MAP` per cell):
   - textures: 0 office carpet tiles, 1 Server Room raised floor with perforated tiles, 2 arena purple grid, 3 IT closet concrete
   - region rules: `ARENA` mask → arena; `y ≥ 16 && x ≤ 25` → Server Room (incl. its doors and the boss door cell); `x ≥ 29 && y ≤ 9` → closet; else carpet
-  - `drawFloor()` does classic floor casting into a `Uint32Array` over an offscreen `ImageData`, then `drawImage`s it, so shake and the death slump still apply. A gradient darkens it toward the horizon.
-- **Ceiling** is still flat `#1a1a2e` (user's call).
-- **Performance** (Claude browser pane): full frame ≈ 7.6–7.9 ms, floor ≈ 2.6 ms of that, inside the 16.7 ms budget for 60 fps. If slower machines struggle, cast the floor at half resolution.
+- **Ceiling** (added after Chunk 8, `CEIL_SRC` → `CEIL_TEX`, `CEIL_MAP` per cell):
+  - textures: 0 office drop-ceiling tiles (also the closet), 1 the same tiles with a fluorescent light panel, 2 Server Room dark slab with a ladder cable tray of muted network cables (runs along x), 3 arena near-black with a faint purple grid
+  - region rules follow `FLOOR_MAP`; office/hallway cells get a light panel when `x % 4 === 2 && y % 3 === 1`
+- **`drawFloorAndCeiling()`** does classic floor casting into one full-screen `Uint32Array` / `ImageData` (`flatCanvas`). Each floor row's mirror above the horizon is the same distance, so one pass writes both. It `drawImage`s the result, so shake and the death slump still apply. Gradients (`floorFog`, `ceilFog`) darken both toward the horizon, and the flat `#1a1a2e` / `#282018` fills remain as a backdrop past the screen edges.
+- **Performance** (Claude browser pane): full frame ≈ 7.8–9 ms with floor + ceiling, inside the 16.7 ms budget for 60 fps. If slower machines struggle, cast the floor and ceiling at half resolution.
 - Verified visually: office, Server Room, IT Closet, arena, boss door, security door, override switch; no console errors.
 
 ---
 
 ## Remaining chunks
-None planned. Ideas: textured ceiling (office ceiling tiles / server room cable trays), environment props as sprites (desks, plants, water cooler), music, sharing the game (itch.io private draft → public).
+None planned. Ideas: environment props as sprites (desks, plants, water cooler), music, sharing the game (itch.io private draft → public).
 
 ---
 
@@ -213,7 +215,7 @@ zBuf[]           — Float64Array(800), perpWallDist per column
 
 enemies[] (incl. the DNS) / projectiles[] (ink | rocket | nx) / explosions[] / pickups[] / effects[]
 ENEMY_TYPES{}    — per-type stats; BOSS_PHASES{}; PICKUPS{} — per-kind tex/scale/apply; TEX{} — sprite textures
-MAP_TEX{} / WALL_TEX{} / FLOOR_TEX[] / FLOOR_MAP — wall + floor textures; drawFloor() — floor casting
+MAP_TEX{} / WALL_TEX{} / FLOOR_TEX[] / FLOOR_MAP / CEIL_TEX[] / CEIL_MAP — wall, floor, ceiling textures; drawFloorAndCeiling() — floor/ceiling casting
 
 shoot()          — keyboard: 7 hitscan pellets → damageEnemy(); cannon: spawns rocket
 explode()        — splash damage (enemies + player self-damage)
@@ -226,7 +228,7 @@ audio{} / SFX{} / sfx() — synthesized effects (tone(), noise()); VOICE{} / say
 startGame() / restart() / canRestart() — title → play → death/victory → R
 
 update()         — title pan | death stamp | victory typing → player → weapon anim → updateEnemies() → updateProjectiles() → updatePickups() → checkBossTrigger()
-render()         — [shake + death slump] ceiling → drawFloor() → textured raycaster (+fog, drawDoorColumn / drawSwitchColumn) → drawSprites() → (title: drawTitle()) → drawWeapon() → drawKeycaps() [/shake] → drawScreenFlash() → drawDeathOverlay() | drawVictoryOverlay() | (drawGlitch() → drawCrosshair() → drawDamageDirs() → drawHUD() → drawBossBar() → drawMinimap() → drawServfail()) → drawSubtitles()
+render()         — [shake + death slump] flat backdrop → drawFloorAndCeiling() → textured raycaster (+fog, drawDoorColumn / drawSwitchColumn) → drawSprites() → (title: drawTitle()) → drawWeapon() → drawKeycaps() [/shake] → drawScreenFlash() → drawDeathOverlay() | drawVictoryOverlay() | (drawGlitch() → drawCrosshair() → drawDamageDirs() → drawHUD() → drawBossBar() → drawMinimap() → drawServfail()) → drawSubtitles()
 ```
 
 ---

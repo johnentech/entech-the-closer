@@ -1962,38 +1962,95 @@ for (let y = 0; y < MAP_H; y++) {
   }
 }
 
-// Floor pixels are written into an offscreen buffer, then drawn with drawImage so shake / the death slump still apply
-const FLOOR_H = SCREEN_H - HALF_H;
-const floorCanvas = document.createElement('canvas');
-floorCanvas.width = SCREEN_W;
-floorCanvas.height = FLOOR_H;
-const floorCtx = floorCanvas.getContext('2d');
-const floorImg = floorCtx.createImageData(SCREEN_W, FLOOR_H);
-const floorBuf = new Uint32Array(floorImg.data.buffer);
-const floorFog = ctx.createLinearGradient(0, HALF_H, 0, HALF_H + 110); // darker toward the horizon
+// --- Ceiling textures ---
+// Office drop-ceiling tile: acoustic pinholes, T-bar grid (2×2 tiles per cell)
+const CEIL_TILE = makeTex(64, 64, (g, R) => {
+  R('#46474b', 0, 0, 64, 64);
+  speckle(R, rng(13), 600, ['#3e3f43', '#4f5054', '#38393c']);
+  R('#2a2b2e', 0, 0, 64, 2); R('#2a2b2e', 0, 0, 2, 64); R('#2a2b2e', 0, 32, 64, 2); R('#2a2b2e', 32, 0, 2, 64);
+  R('#5a5b5f', 0, 2, 64, 1); R('#5a5b5f', 2, 0, 1, 64); R('#5a5b5f', 0, 34, 64, 1); R('#5a5b5f', 34, 0, 1, 64);
+});
+const CEIL_SRC = [
+  // 0: office / hallway / closet tiles
+  CEIL_TILE,
+  // 1: office tiles with a fluorescent light panel (diffuser grid)
+  makeTex(64, 64, (g, R) => {
+    g.drawImage(CEIL_TILE, 0, 0);
+    R('#2a2b2e', 4, 18, 56, 28);
+    R('#c8d4dc', 6, 20, 52, 24);
+    R('#eef4f8', 8, 22, 48, 20);
+    for (let x = 8; x < 56; x += 4) R('#c0ccd4', x, 22, 1, 20);
+    for (let y = 22; y < 42; y += 4) R('#c0ccd4', 8, y, 48, 1);
+  }),
+  // 2: Server Room: dark concrete slab with a ladder cable tray full of network cables (runs along x)
+  makeTex(64, 64, (g, R) => {
+    R('#1a1c22', 0, 0, 64, 64);
+    speckle(R, rng(14), 300, ['#16181d', '#22252c']);
+    R('#5a5a50', 0, 18, 64, 3); R('#5a5a50', 0, 43, 64, 3);         // rails
+    for (let x = 2; x < 64; x += 8) R('#45453e', x, 21, 2, 22);     // rungs
+    const cables = ['#1a3a6a', '#7a6a20', '#6a1c1c', '#1c6a3a', '#1a3a6a', '#505050']; // muted so the racks stay the focus
+    cables.forEach((c, i) => R(c, 0, 23 + i * 3, 64, 2));
+  }),
+  // 3: DNS arena: near-black with a faint purple grid
+  makeTex(64, 64, (g, R) => {
+    R('#120a1e', 0, 0, 64, 64);
+    speckle(R, rng(15), 200, ['#0e0818', '#1a1030']);
+    R('#2a1648', 0, 0, 64, 1); R('#2a1648', 0, 0, 1, 64);
+    R('#5a2a9a', 0, 0, 1, 1);
+  }),
+];
+const CEIL_TEX = CEIL_SRC.map(c => new Uint32Array(c.getContext('2d').getImageData(0, 0, TEX_SIZE, TEX_SIZE).data.buffer));
+
+// Which ceiling each cell uses: arena, Server Room, closet (plain tiles), else office tiles with a light panel every few cells
+const CEIL_MAP = new Uint8Array(MAP_W * MAP_H);
+for (let y = 0; y < MAP_H; y++) {
+  for (let x = 0; x < MAP_W; x++) {
+    const i = y * MAP_W + x, f = FLOOR_MAP[i];
+    CEIL_MAP[i] = f === 2 ? 3 : f === 1 ? 2 : f === 3 ? 0 : (x % 4 === 2 && y % 3 === 1) ? 1 : 0;
+  }
+}
+
+// Floor + ceiling pixels go into one offscreen buffer, then get drawn with drawImage so shake / the death slump still apply
+const FLAT_H = SCREEN_H - HALF_H; // rows per half (floor below the horizon, ceiling above)
+const flatCanvas = document.createElement('canvas');
+flatCanvas.width = SCREEN_W;
+flatCanvas.height = SCREEN_H;
+const flatCtx = flatCanvas.getContext('2d');
+const flatImg = flatCtx.createImageData(SCREEN_W, SCREEN_H);
+const flatBuf = new Uint32Array(flatImg.data.buffer);
+const floorFog = ctx.createLinearGradient(0, HALF_H, 0, HALF_H + 110); // both darken toward the horizon
 floorFog.addColorStop(0, 'rgba(0,0,0,0.7)');
 floorFog.addColorStop(1, 'rgba(0,0,0,0)');
+const ceilFog = ctx.createLinearGradient(0, HALF_H - 110, 0, HALF_H);
+ceilFog.addColorStop(0, 'rgba(0,0,0,0)');
+ceilFog.addColorStop(1, 'rgba(0,0,0,0.75)');
 
-// Classic floor casting: each screen row below the horizon is one distance; step across it in world space
-function drawFloor() {
+// Classic floor casting: each screen row below the horizon is one distance; step across it in world space.
+// The ceiling row mirrored above the horizon is the same distance, so one pass fills both.
+function drawFloorAndCeiling() {
   const dx0 = player.dirX - player.planeX, dy0 = player.dirY - player.planeY;
   const ddx = 2 * player.planeX / SCREEN_W, ddy = 2 * player.planeY / SCREEN_W;
-  for (let y = 0, i = 0; y < FLOOR_H; y++) {
+  for (let y = 0; y < FLAT_H; y++) {
     const rowDist = HALF_H / (y + 0.5);
     const stepX = rowDist * ddx, stepY = rowDist * ddy;
     let fx = player.x + rowDist * dx0, fy = player.y + rowDist * dy0;
-    for (let x = 0; x < SCREEN_W; x++, i++) {
+    let fi = (HALF_H + y) * SCREEN_W, ci = (HALF_H - 1 - y) * SCREEN_W;
+    for (let x = 0; x < SCREEN_W; x++) {
       const cx = Math.floor(fx), cy = Math.floor(fy);
-      const tex = FLOOR_TEX[cx >= 0 && cy >= 0 && cx < MAP_W && cy < MAP_H ? FLOOR_MAP[cy * MAP_W + cx] : 0];
-      floorBuf[i] = tex[((fy * TEX_SIZE) & 63) * TEX_SIZE + ((fx * TEX_SIZE) & 63)];
+      const cell = cx >= 0 && cy >= 0 && cx < MAP_W && cy < MAP_H ? cy * MAP_W + cx : 0;
+      const t = ((fy * TEX_SIZE) & 63) * TEX_SIZE + ((fx * TEX_SIZE) & 63);
+      flatBuf[fi++] = FLOOR_TEX[FLOOR_MAP[cell]][t];
+      flatBuf[ci++] = CEIL_TEX[CEIL_MAP[cell]][t];
       fx += stepX;
       fy += stepY;
     }
   }
-  floorCtx.putImageData(floorImg, 0, 0);
-  ctx.drawImage(floorCanvas, 0, HALF_H);
+  flatCtx.putImageData(flatImg, 0, 0);
+  ctx.drawImage(flatCanvas, 0, 0);
   ctx.fillStyle = floorFog;
-  ctx.fillRect(0, HALF_H, SCREEN_W, FLOOR_H);
+  ctx.fillRect(0, HALF_H, SCREEN_W, FLAT_H);
+  ctx.fillStyle = ceilFog;
+  ctx.fillRect(0, 0, SCREEN_W, HALF_H);
 }
 
 // --- Render ---
@@ -2011,14 +2068,13 @@ function render() {
     ctx.translate(-SCREEN_W / 2, -HALF_H);
   }
 
-  // Ceiling (overdrawn past the edges so shake and the death slump never show stale pixels)
+  // Flat ceiling/floor backdrop (overdrawn past the edges so shake and the death slump never show stale pixels),
+  // then the textured floor and ceiling on top
   ctx.fillStyle = '#1a1a2e';
   ctx.fillRect(-200, -200, SCREEN_W + 400, HALF_H + 200);
-
-  // Floor: flat backdrop (shows only past the screen edges during the death slump), then the textured floor
   ctx.fillStyle = '#282018';
   ctx.fillRect(-200, HALF_H, SCREEN_W + 400, HALF_H + 200);
-  drawFloor();
+  drawFloorAndCeiling();
 
   // Cast one ray per screen column
   const blink = performance.now() / RACK_BLINK_MS | 0;
