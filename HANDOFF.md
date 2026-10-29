@@ -198,6 +198,15 @@ All procedural (64×64 canvases drawn once with `makeTex`, seeded by `rng()` + `
 
 ---
 
+### Printer redesign ✅
+The Printer read as a white block with red eyes, so `drawPrinter` / `drawPrinterDead` were redrawn as an office multifunction printer (same 48×44 sprite, same scale and attack look):
+- **Top:** paper fanned in the document feeder, the feeder unit, and a dark scanner lid overhanging the body. The lid's edge is the brow over slanted red LED eyes.
+- **Front:** a control panel (status screen goes red on windup, plus start/stop buttons), an ENTECH-blue stripe, and an output slot with a printed sheet sticking out. The slot opens into paper teeth around an ink blob when it attacks.
+- **Bottom:** two paper drawers with handles and a paper-level window, on casters.
+- **Dead:** squashed body under its slumped lid, ink puddle, scattered paper.
+
+---
+
 ## Remaining chunks
 None planned. Ideas: environment props as sprites (desks, plants, water cooler), music, sharing the game (itch.io private draft → public).
 

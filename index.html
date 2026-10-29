@@ -505,59 +505,68 @@ function radialTex(size, stops) {
   });
 }
 
+// Office multifunction printer: paper in the document feeder, dark scanner lid (its edge is the angry brow),
+// control panel, output slot with a printed sheet sticking out, two paper drawers, casters
 function drawPrinter(g, R, frame) {
-  const step = frame === 'walk1' ? 2 : 0;
+  const step = frame === 'walk1' ? 1 : 0;
   const atk  = frame === 'attack';
-  // Stubby legs
-  R('#2a2a2a', 10 + step, 38, 7, 6);
-  R('#2a2a2a', 31 - step, 38, 7, 6);
-  // Paper in the input tray
-  R('#f4f4f4', 13, 1, 22, 9);
-  R('#cfcfcf', 13, 3, 22, 1);
-  R('#cfcfcf', 13, 6, 22, 1);
-  R('#8d897f', 9, 8, 30, 6);
-  // Body
-  R('#d9d5ca', 3, 13, 42, 26);
-  R('#efece4', 3, 13, 42, 2);
-  R('#b4afa2', 3, 34, 42, 5);
-  R('#9d998e', 3, 13, 2, 26);
-  R('#9d998e', 43, 13, 2, 26);
-  // Status display — goes red when it's about to print on you
-  R('#2c2c2c', 32, 15, 10, 7);
-  R(atk ? '#ff3b3b' : '#3dff73', 33, 16, 8, 5);
-  // Angry status-LED eyes
-  const eye = atk ? '#ffd0d0' : '#ff2a2a';
-  R(eye, 8, 18, 6, 4);
-  R(eye, 19, 18, 6, 4);
-  R('#222', 7, 16, 4, 1); R('#222', 10, 17, 4, 1);
-  R('#222', 22, 16, 4, 1); R('#222', 19, 17, 4, 1);
-  // Output-slot mouth
+  // Casters
+  R('#1a1a1a', 6 + step, 40, 7, 4); R('#1a1a1a', 35 - step, 40, 7, 4);
+  R('#4a4a4a', 8 + step, 41, 2, 2); R('#4a4a4a', 37 - step, 41, 2, 2);
+  // Paper fanned in the document feeder
+  R('#f4f4f4', 13, 0, 20, 2); R('#dcdcdc', 12, 2, 22, 1); R('#f4f4f4', 11, 3, 24, 2);
+  // Document feeder unit
+  R('#4a4d53', 8, 5, 31, 4); R('#5e626a', 8, 5, 31, 1);
+  // Body (light gray, shaded sides)
+  R('#d8d8d4', 3, 14, 42, 26);
+  R('#ababa5', 3, 14, 2, 26); R('#ababa5', 43, 14, 2, 26);
+  // Scanner lid, overhanging the body
+  R('#34373d', 1, 9, 46, 6); R('#50545b', 1, 9, 46, 1);
+  // Angry LED eyes in the shadow under the lid (inner corners cut so they slant down)
+  const eye = atk ? '#ffe0e0' : '#ff2a2a';
+  R('#1e2024', 5, 15, 22, 4);
+  R(eye, 7, 15, 7, 3); R(eye, 17, 15, 7, 3);
+  R('#1e2024', 12, 15, 2, 1); R('#1e2024', 17, 15, 2, 1);
+  // Control panel: status screen (red when it's about to print on you) + start/stop buttons
+  R('#2a2c30', 29, 15, 14, 6);
+  R(atk ? '#ff3b3b' : '#3dff73', 30, 16, 8, 4);
+  R('#30c050', 39, 16, 3, 2); R('#e03030', 39, 19, 3, 1);
+  // ENTECH-blue accent stripe
+  R('#2aa4ff', 5, 21, 38, 1);
+  // Output slot: a printed sheet sticking out; opens into paper teeth around an ink blob when attacking
   if (atk) {
-    R('#14081c', 7, 24, 34, 11);
-    for (let i = 0; i < 8; i++) R('#fff', 8 + i * 4, 24, 2, 3);
-    for (let i = 0; i < 7; i++) R('#fff', 10 + i * 4, 32, 2, 3);
+    R('#14081c', 6, 22, 36, 9);
+    for (let i = 0; i < 9; i++) R('#fff', 7 + i * 4, 22, 2, 3);
+    for (let i = 0; i < 8; i++) R('#fff', 9 + i * 4, 28, 2, 3);
     g.fillStyle = '#5a1f8a';
-    g.beginPath(); g.arc(24, 29, 4, 0, Math.PI * 2); g.fill();
-    R('#b77ce6', 22, 27, 2, 1);
+    g.beginPath(); g.arc(24, 26, 4, 0, Math.PI * 2); g.fill();
+    R('#b77ce6', 22, 24, 2, 1);
   } else {
-    R('#14081c', 7, 26, 34, 5);
-    for (let i = 0; i < 8; i++) R('#fff', 8 + i * 4, 26, 2, 2);
-    R('#f4f4f4', 18, 29, 12, 6);
-    R('#cfcfcf', 18, 31, 12, 1);
+    R('#16161a', 7, 23, 34, 4);
+    R('#f6f6f6', 12, 25, 24, 6);
+    R('#c8c8c8', 14, 27, 18, 1); R('#c8c8c8', 14, 29, 13, 1); // printed lines
   }
+  // Paper drawers with handles and a paper-level window
+  R('#8a8a84', 3, 31, 42, 1); R('#c6c6c0', 5, 32, 38, 4);
+  R('#8a8a84', 3, 36, 42, 1); R('#c6c6c0', 5, 37, 38, 3);
+  R('#2a2a2a', 20, 33, 8, 2); R('#2a2a2a', 20, 38, 8, 1);
+  R('#5a5a56', 37, 33, 4, 2); R('#f4f4f4', 37, 34, 4, 1);
 }
 
+// Knocked over: squashed body under its own lid, ink puddle, paper everywhere
 function drawPrinterDead(g, R) {
   g.fillStyle = '#2d1045';
   g.beginPath(); g.ellipse(24, 41, 22, 3, 0, 0, Math.PI * 2); g.fill();
-  R('#b4afa2', 6, 33, 36, 9);
-  R('#d9d5ca', 6, 33, 36, 3);
-  R('#555', 16, 34, 1, 7); R('#555', 17, 37, 6, 1); R('#555', 31, 35, 1, 6);
-  R('#14081c', 10, 38, 28, 2);
-  R('#550000', 12, 36, 4, 1);
+  R('#ababa5', 6, 34, 36, 8);
+  R('#d8d8d4', 6, 34, 36, 3);
+  R('#34373d', 3, 31, 40, 4); R('#50545b', 3, 31, 40, 1); // lid, slumped flat
+  R('#2aa4ff', 8, 38, 30, 1);
+  R('#555', 16, 35, 1, 6); R('#555', 17, 37, 6, 1); R('#555', 31, 35, 1, 6);
+  R('#14081c', 10, 39, 28, 2);
+  R('#550000', 9, 35, 4, 1); R('#550000', 17, 35, 4, 1); // dead eyes
   R('#f4f4f4', 0, 39, 8, 4);
-  R('#f4f4f4', 39, 36, 9, 5);
-  R('#cfcfcf', 39, 38, 9, 1);
+  R('#f4f4f4', 39, 36, 9, 5); R('#cfcfcf', 39, 38, 9, 1);
+  R('#f4f4f4', 21, 27, 7, 3); R('#cfcfcf', 21, 28, 7, 1);
 }
 
 function drawRouter(g, R, frame) {
