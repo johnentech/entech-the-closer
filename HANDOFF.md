@@ -135,6 +135,11 @@ Working title: **DNS: The Reckoning**. Player is an IT tech who fights office eq
 - **Shadow IT** (boss adds) now always drops **coffee (+20 SLA) and closures (+3)**, placed side by side across your line of sight. This replaces the old 65% tickets / 35% closures roll.
 - Verified: all 22 files decode and play through `sfx()` with no errors, and drops spawn correctly. **Not checked by ear.**
 
+### Fullscreen + window scaling ✅
+- The canvas still renders at 800×500. CSS scales it with `image-rendering: pixelated`, keeping the 8:5 shape. In a normal window it fills the width or height, whichever runs out first, leaving room for the controls line: `width: min(100vw, (100vh − 26px) × 1.6)`.
+- **Fullscreen:** **Alt+Enter** (works on the title screen without starting the game) or the "⛶ Fullscreen" button in the controls line → `toggleFullscreen()`, which makes the canvas itself fullscreen. `canvas:fullscreen` uses `object-fit: contain`, so widescreen gets black bars. Esc exits. Mouse capture works the same way inside fullscreen. The title screen lists ALT+ENTER.
+- The Claude browser pane refuses fullscreen requests, just as it refuses pointer lock. Verified there: scaling at 789×666 and at 1600×800, and both triggers call `requestFullscreen`. The fullscreen view itself is untested and needs a real browser.
+
 ---
 
 ## Running / testing
