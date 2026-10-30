@@ -348,13 +348,25 @@ A weak melee weapon of last resort: a gaming mouse swung by its cord. **Key 3**,
 
 ---
 
+### Monster closet before the boss ✅
+Flipping the main switch no longer unlocks the boss door. It springs a Doom-style monster closet.
+- **Map:** a new closet (11×2) is carved into the solid block between the office and the Server Room (rows 14–15, cols 5–15). Its front is the Server Room's north wall (`L` cells, row 16, type `CLOSET_WALL` = 10, plain concrete with no tell). Inside: **3 Printers, 2 Routers**, and enough ammo to fully restock from empty (**4 keycaps** = 32 vs max 25, **4 closures** = 12 vs max 10), on the floor from the start. The **core breaker** (`Y`, type `BREAKER` = 9) is in the closet's back wall (row 13, col 10) with its panel on the south face. Its north face, toward the office, is plain concrete.
+- `CLOSET` (flood fill north of the `L` cells) marks closet floor. Monsters spawned there get `e.closet = true`, and the closet floor uses the Server Room floor texture.
+- **Sequence:** main switch → `flipSwitch()` sets `closet.at` (`CLOSET_DELAY_MS` 350 after the lever clunk). `updateCloset()` then starts the drop: the Doom door sound plus a low `rumble`, a little shake, and every closet monster wakes. After `CLOSET_LOWER_MS` (1200) the `L` cells become floor and the flow field rebuilds. The walls stay solid for movement, shots and line of sight while sinking. Core breaker → `flipBreaker()` sets `game.breakerOn`, which is now what `doorLocked(DOOR)` checks. The breaker works whether or not the closet monsters are dead.
+- **Rendering the drop:** while sinking, `render()` calls `castRay(..., seeLifts = true)`. It passes through closet-wall cells, recording the first one (`liftDist/liftSide/liftWallX`), and the scene behind is drawn normally. The wall slice is drawn on top: the top `closetHeight()` fraction of its texture, standing up from the floor line, fogged. `liftZ[x]` / `liftTop[x]` let `drawSprites()` clip anything behind the sinking wall at its top edge, so the monsters rise into view as it drops. No top face is drawn; it's only visible for a moment. A frame mid-drop takes ~9 ms vs ~5 ms normally.
+- **Text:** main switch → "MAIN SWITCH RESET — ...WHAT WAS THAT?". Breaker prompt "[ E ] FLIP CORE BREAKER" → "CORE BREAKER ON — CORE ACCESS UNLOCKED". Boss-door prompt: "RESET THE MAIN SWITCH TO UNLOCK" → "FLIP THE CORE BREAKER TO UNLOCK" after the switch. Pressing E on the locked door says "LOCKED — FLIP THE CORE BREAKER IN THE CLOSET". The minimap shows the breaker green once flipped.
+- **Voice:** new `closet` event (`closet_1`, "That is NOT in the asset inventory.", not recorded yet) on the main switch. The `switch` event ("Override engaged. Time to talk to the DNS.") moved to the core breaker. `sounds/SCRIPT.md` is updated.
+- The controls hint under the game now reads "1/2/3/Q weapon".
+
+---
+
 ## Remaining chunks
 
 ### Next session (user's list, 2026-10-29). Not started; discuss before coding
 1. ~~Make pickups more noticeable~~ and 2. ~~Redesign the Closing Cannon pickups~~: done (see "Bigger, hovering pickups" above).
 3. ~~Weak melee fallback weapon~~: done (see "Mouse: melee fallback" above).
 4. **Secret easter-egg room**, unlocked by the player doing something. To decide: where it is (a hidden wall that slides open like Doom's secrets, behind a poster, in the office or the IT Closet), what unlocks it (pressing E on a suspicious wall, shooting something, typing a code like a cheat, flushing DNS in a certain spot, …), and what's inside (credits for the team / voice actor, bonus supplies, an IT joke), plus a "SECRET FOUND" message and sound.
-5. **Monster closet before the boss** (added 2026-10-30). Flipping the main switch no longer unlocks the boss door. Instead it opens a monster closet (Doom-style ambush) holding a **second switch**, and that second switch is what unlocks the boss door. Once the closet's monsters are defeated, the closet also holds **enough ammo to fully stock the player** (keycaps and closures) for the boss fight. To decide: where the closet goes (near the server racks / boss door), which enemies and how many, whether the second switch works before every monster is dead, whether the ammo appears on the floor from the start or drops when the last monster dies, and the messages and voice lines (`switch`, `locked_core` and the "RESET THE MAIN SWITCH TO UNLOCK" prompt will need new wording).
+5. ~~Monster closet before the boss~~: done (see "Monster closet before the boss" above).
 
 Voice clips: the first 9 are in (see above). The other events in `VOICE` still have no recordings.
 

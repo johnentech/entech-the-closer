@@ -16,7 +16,7 @@
 </head>
 <body>
 <canvas id="game"></canvas>
-<div id="controls">WASD move · ←/→/mouse turn · Click/Space fire · 1/2/Q weapon · E use · F flush · M map · N sound<button id="fullscreen">⛶ Fullscreen (Alt+Enter)</button></div>
+<div id="controls">WASD move · ←/→/mouse turn · Click/Space fire · 1/2/3/Q weapon · E use · F flush · M map · N sound<button id="fullscreen">⛶ Fullscreen (Alt+Enter)</button></div>
 <script>
 const SCREEN_W = 800;
 const SCREEN_H = 500;
@@ -29,9 +29,11 @@ const COLLIDE    = 0.22; // collision margin
 // --- Level ---
 // Office (top left) → hallways → IT Closet (top right) → Server Room (bottom left) → Boss Door → Arena (bottom right)
 // The Server Room's security doors stay locked until the Closing Cannon is picked up in the IT Closet.
-// The boss door stays locked until the main switch (X, inside the Server Room's C-shaped rack) is flipped.
+// The main switch (X, inside the Server Room's C-shaped rack) drops the Server Room's north wall (L) like a Doom monster
+// closet; the core breaker (Y) on the closet's back wall unlocks the boss door.
 // Walls:    # concrete   = cubicle divider   S server rack   D boss door   K security door   % IT closet shelving   @ arena wall
-//           X main switch (a rack with a switch on its east face)
+//           X main switch (a rack with a switch on its east face)   Y core breaker (concrete, panel on its south face)
+//           L monster-closet wall (looks like concrete; sinks into the floor when the main switch is flipped)
 // Entities: P player start   p Printer   r Rogue Router   t keycaps (keyboard ammo)   c coffee
 //           C Closing Cannon   o closures (cannon ammo)   F Flush DNS Cache   B DNS boss spawn
 const LEVEL = [
@@ -48,10 +50,10 @@ const LEVEL = [
   '#..c......p.......####..#####%%%%%%%%%%%',
   '#...==..==...==...####..#@@@@@@@@@@@@@@@',
   '#.......t.........####p.#@t...........o@',
-  '######################..#@.............@',
-  '######################..#@..@@.....@@..@',
-  '######################..#@..@@.....@@..@',
-  '######################K##@.............@',
+  '##########Y###########..#@.............@',
+  '#####tto.....oot######..#@..@@.....@@..@',
+  '#####tp.r.p.r.po######..#@..@@.....@@..@',
+  '#####LLLLLLLLLLL######K##@.............@',
   '#........................@.............@',
   '#..SSS...SSS...SSS.......@.............@',
   '#..S.S...X..p..S.S...r...@.............@',
@@ -66,10 +68,12 @@ const LEVEL = [
   '#F..........c............@c..........tF@',
   '#########################@@@@@@@@@@@@@@@',
 ];
-const WALL_CHARS = { '#': 1, '=': 2, 'S': 3, 'D': 4, '%': 5, '@': 6, 'K': 7, 'X': 8 };
-const DOOR          = 4; // boss door
-const SECURITY_DOOR = 7; // server room doors, unlocked by the Closing Cannon
-const SWITCH        = 8; // main switch, unlocks the boss door
+const WALL_CHARS = { '#': 1, '=': 2, 'S': 3, 'D': 4, '%': 5, '@': 6, 'K': 7, 'X': 8, 'Y': 9, 'L': 10 };
+const DOOR          = 4;  // boss door
+const SECURITY_DOOR = 7;  // server room doors, unlocked by the Closing Cannon
+const SWITCH        = 8;  // main switch, opens the monster closet
+const BREAKER       = 9;  // core breaker in the closet, unlocks the boss door
+const CLOSET_WALL   = 10; // lowers when the main switch is flipped
 const DOOR_TYPES    = [DOOR, SECURITY_DOOR];
 
 // Parse into MAP (0 = floor, >0 = wall type) and a list of entity spawns
@@ -94,7 +98,29 @@ const MAP_W = MAP[0].length;
 const MAP_H = MAP.length;
 
 // Walls are textured (WALL_TEX, see "Map textures"); the minimap uses flat colors
-const MINIMAP_COLORS = { 1: '#999', 2: '#a08050', 3: '#4a6a9a', 4: '#e33', 5: '#7a8060', 6: '#7a4aa0', 7: '#e0b020', 8: '#ff9020' };
+const MINIMAP_COLORS = { 1: '#999', 2: '#a08050', 3: '#4a6a9a', 4: '#e33', 5: '#7a8060', 6: '#7a4aa0', 7: '#e0b020', 8: '#ff9020', 9: '#ff9020', 10: '#999' };
+
+// Monster closet: the floor cells behind the closet wall (flood fill north from it), so their monsters can be woken
+// and the floor matched to the Server Room
+const CLOSET = new Uint8Array(MAP_W * MAP_H);
+const CLOSET_WALLS = [];
+MAP.forEach((row, y) => row.forEach((v, x) => { if (v === CLOSET_WALL) CLOSET_WALLS.push([x, y]); }));
+{
+  const queue = CLOSET_WALLS.map(([x, y]) => [x, y - 1]).filter(([x, y]) => MAP[y][x] === 0);
+  for (const [x, y] of queue) CLOSET[y * MAP_W + x] = 1;
+  while (queue.length) {
+    const [cx, cy] = queue.pop();
+    for (const [ox, oy] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) {
+      const nx = cx + ox, ny = cy + oy;
+      if (MAP[ny][nx] !== 0 || CLOSET[ny * MAP_W + nx]) continue;
+      CLOSET[ny * MAP_W + nx] = 1;
+      queue.push([nx, ny]);
+    }
+  }
+}
+const CLOSET_LOWER_MS = 1200; // how long the wall takes to sink
+const CLOSET_DELAY_MS = 350;  // after the switch clunks
+const closet = { at: 0, open: false }; // at = when the wall starts lowering (0 = not yet)
 
 const canvas = document.getElementById('game');
 const ctx = canvas.getContext('2d');
@@ -111,6 +137,7 @@ const player = {
 
 // Z-buffer (perpWallDist per column, used for sprite depth testing)
 const zBuf = new Float64Array(SCREEN_W);
+const liftZ = new Float64Array(SCREEN_W).fill(Infinity), liftTop = new Float64Array(SCREEN_W); // sinking closet wall per column
 
 // Game state
 const game = {
@@ -134,7 +161,8 @@ const game = {
   cyanFlash: 0, // screen flash when flushing, 1 → 0
   msg: '', msgUntil: 0,
   usePrompt: false,
-  switchOn: false, // main switch reset → boss door unlocked
+  switchOn: false,   // main switch reset → monster closet opens
+  breakerOn: false,  // core breaker flipped → boss door unlocked
   started: false, // false = title screen
   startAt: 0, endAt: 0, // shift timer for the death / victory screens
   overAt: 0, killedBy: null, ticketNo: 0, resolution: '', stamped: false, // death screen
@@ -336,6 +364,10 @@ const SFX = {
     noise(o, t, { ms: 25, vol: 0.35, f0: 3200, q: 6 });
   } },
   mouse_wall: { play: (o, t) => { noise(o, t, { ms: 40, vol: 0.35, f0: 2600, q: 5 }); tone(o, t, { f0: 180, f1: 90, ms: 60, vol: 0.15 }); } },
+  rumble:  { play: (o, t) => {
+    noise(o, t, { ms: CLOSET_LOWER_MS, vol: 0.6, f0: 160, f1: 60, filter: 'lowpass', attack: 120 });
+    tone(o, t, { type: 'sine', f0: 48, f1: 38, ms: CLOSET_LOWER_MS, vol: 0.35, attack: 120 });
+  } },
   type:    { gap: 30, play: (o, t) => noise(o, t, { ms: 18, vol: 0.12, f0: 3500 + Math.random() * 1500, q: 6 }) },
   victory: { play: (o, t) => [523, 659, 784, 1047].forEach((f, i) => tone(o, t + i * 0.09, { type: 'triangle', f0: f, ms: 1400 - i * 90, vol: 0.18, attack: 10 })) },
 };
@@ -437,6 +469,7 @@ const VOICE = {
   flush_use:   { chance: 1,    cooldown: 0,     priority: 4, lines: [['flush_use_1', 'Flush THIS.'], ['flush_use_2', 'ipconfig, slash, flush... D-N-S.']] },
   locked:      { chance: 1,    cooldown: 6000,  priority: 2, lines: [['locked_1', 'Access denied. Of course.'], ['locked_2', 'I need clearance. IT closet, probably.']] },
   locked_core: { chance: 1,    cooldown: 6000,  priority: 2, lines: [['locked_core_1', "Core's locked down. There's an override in here somewhere."]] },
+  closet:      { chance: 1,    cooldown: 0,     priority: 3, lines: [['closet_1', "That is NOT in the asset inventory."]] },
   switch:      { chance: 1,    cooldown: 0,     priority: 3, lines: [['switch_1', 'Override engaged. Time to talk to the DNS.']] },
   boss_intro:  { chance: 1,    cooldown: 0,     priority: 5, lines: [['boss_intro_1', '']] },
   boss_phase2: { chance: 1,    cooldown: 0,     priority: 4, lines: [['boss_phase2_1', 'Shadow IT? Who approved this?!']] },
@@ -1258,8 +1291,8 @@ function spawnEnemy(type, x, y) {
 
 // Populate the level. Shadow IT is never placed — the DNS boss spawns it (Chunk 5).
 const SPAWN_CHARS = {
-  p: s => spawnEnemy('printer', s.x, s.y),
-  r: s => spawnEnemy('router',  s.x, s.y),
+  p: s => { spawnEnemy('printer', s.x, s.y).closet = !!CLOSET[Math.floor(s.y) * MAP_W + Math.floor(s.x)]; },
+  r: s => { spawnEnemy('router',  s.x, s.y).closet = !!CLOSET[Math.floor(s.y) * MAP_W + Math.floor(s.x)]; },
   t: s => pickups.push({ kind: 'keycaps',  x: s.x, y: s.y, amount: 8 }),
   c: s => pickups.push({ kind: 'coffee',   x: s.x, y: s.y }),
   o: s => pickups.push({ kind: 'closures', x: s.x, y: s.y }),
@@ -1733,35 +1766,73 @@ function doorAhead() {
     const cy = Math.floor(player.y + player.dirY * d);
     if (!isWall(cx, cy)) continue;
     const type = MAP[cy] && MAP[cy][cx];
-    if (type === SWITCH) return player.x > cx + 1 ? { x: cx, y: cy, type } : null; // the panel is on the east face
+    if (type === SWITCH)  return player.x > cx + 1 ? { x: cx, y: cy, type } : null; // the panel is on the east face
+    if (type === BREAKER) return player.y > cy + 1 ? { x: cx, y: cy, type } : null; // …and this one on the south face
     return DOOR_TYPES.includes(type) ? { x: cx, y: cy, type } : null;
   }
   return null;
 }
 
-// Security doors open once you have the Closing Cannon. The boss door opens once the main switch
+// Security doors open once you have the Closing Cannon. The boss door opens once the core breaker
 // is flipped, and locks again once the fight starts.
 function doorLocked(type) {
   if (type === SECURITY_DOOR) return !game.hasCannon;
-  if (type === DOOR) return !game.switchOn || game.bossTriggered;
+  if (type === DOOR) return !game.breakerOn || game.bossTriggered;
   return false;
 }
 
+// Main switch: a Doom monster closet. The Server Room's north wall sinks into the floor and the
+// Printers and Routers behind it come for you; the core breaker is on the closet's back wall.
 function flipSwitch() {
   if (game.switchOn) return;
   game.switchOn = true;
-  showMessage('MAIN SWITCH RESET  —  CORE ACCESS UNLOCKED', 3000);
+  closet.at = performance.now() + CLOSET_DELAY_MS;
+  showMessage('MAIN SWITCH RESET  —  ...WHAT WAS THAT?', 3000);
+  sfx('lever');
+  say('closet');
+}
+
+function flipBreaker() {
+  if (game.breakerOn) return;
+  game.breakerOn = true;
+  showMessage('CORE BREAKER ON  —  CORE ACCESS UNLOCKED', 3000);
   sfx('lever');
   say('switch');
+}
+
+// Height of the closet wall: 1 standing, sinking to 0 over CLOSET_LOWER_MS
+function closetHeight() {
+  if (closet.open) return 0;
+  if (!closet.at) return 1;
+  return Math.max(0, Math.min(1, 1 - (performance.now() - closet.at) / CLOSET_LOWER_MS));
+}
+
+// From update(): the wall starts to sink (closet monsters wake), then is gone (walkable, shootable)
+function updateCloset(now) {
+  if (!closet.at || closet.open || now < closet.at) return;
+  if (!closet.started) {
+    closet.started = true;
+    const [mx, my] = CLOSET_WALLS[CLOSET_WALLS.length >> 1];
+    sfx('door', mx + 0.5, my + 0.5);
+    sfx('rumble', mx + 0.5, my + 0.5);
+    game.shake = Math.max(game.shake, 4);
+    for (const e of enemies) if (e.closet) wake(e, now);
+  }
+  if (now - closet.at < CLOSET_LOWER_MS) return;
+  closet.open = true;
+  for (const [x, y] of CLOSET_WALLS) MAP[y][x] = 0;
+  flowCell = -1;
 }
 
 function useAction() {
   const d = doorAhead();
   if (!d || game.over) return;
   if (d.type === SWITCH) { flipSwitch(); return; }
+  if (d.type === BREAKER) { flipBreaker(); return; }
   if (doorLocked(d.type)) {
     showMessage(d.type === SECURITY_DOOR ? 'ACCESS DENIED  —  CLEARANCE IS IN THE IT CLOSET'
               : game.bossTriggered ? 'LOCKED  —  RESOLVE THE DNS FIRST'
+              : game.switchOn ? 'LOCKED  —  FLIP THE CORE BREAKER IN THE CLOSET'
               : 'LOCKED  —  FIND THE MAIN SWITCH IN THE SERVER RACKS');
     sfx('denied');
     say(d.type === SECURITY_DOOR ? 'locked' : 'locked_core');
@@ -2197,8 +2268,10 @@ function isWall(x, y) {
 // DDA march from (ox,oy) along (dx,dy). Returns distance in ray-parameter units:
 // perpendicular distance for camera rays, true distance when (dx,dy) is normalized.
 // Sets rayHit (wall type), raySide (0 = EW face, 1 = NS face), rayWallX (0–1 across the face), rayMapX/Y (cell hit).
+// seeLifts (rendering only): pass through closet walls while they sink, recording the first one in liftDist/Side/WallX.
 let rayHit = 0, raySide = 0, rayWallX = 0, rayMapX = 0, rayMapY = 0;
-function castRay(ox, oy, dx, dy) {
+let liftDist = Infinity, liftSide = 0, liftWallX = 0;
+function castRay(ox, oy, dx, dy, seeLifts) {
   let mapX = Math.floor(ox);
   let mapY = Math.floor(oy);
 
@@ -2212,11 +2285,21 @@ function castRay(ox, oy, dx, dy) {
   else        { stepY =  1; sdY = (mapY + 1 - oy) * ddY; }
 
   let hit = 0, side = 0;
+  liftDist = Infinity;
   while (!hit) {
     if (sdX < sdY) { sdX += ddX; mapX += stepX; side = 0; }
     else           { sdY += ddY; mapY += stepY; side = 1; }
     if (mapX < 0 || mapX >= MAP_W || mapY < 0 || mapY >= MAP_H) hit = 1;
     else hit = MAP[mapY][mapX];
+    if (hit === CLOSET_WALL && seeLifts) {
+      if (liftDist === Infinity) {
+        liftDist = side === 0 ? sdX - ddX : sdY - ddY;
+        liftSide = side;
+        liftWallX = side === 0 ? oy + liftDist * dy : ox + liftDist * dx;
+        liftWallX -= Math.floor(liftWallX);
+      }
+      hit = 0;
+    }
   }
   const dist = side === 0 ? sdX - ddX : sdY - ddY;
   rayHit = hit; raySide = side; rayMapX = mapX; rayMapY = mapY;
@@ -2344,6 +2427,7 @@ function update() {
   updateEnemies(now);
   updateProjectiles(now);
   updatePickups();
+  updateCloset(now);
   checkBossTrigger();
   game.usePrompt = doorAhead();
 }
@@ -2473,6 +2557,8 @@ const WALL_TEX = {
   6: [faces(MAP_TEX.arena)],
   7: [faces(MAP_TEX.secDoor)],
   8: RACK_FRAMES, // main switch (panel drawn on top)
+  9: [faces(MAP_TEX.concrete)],  // core breaker (panel drawn on top)
+  10: [faces(MAP_TEX.concrete)], // monster-closet wall: plain concrete, no tell
 };
 const RACK_BLINK_MS = 350;
 
@@ -2528,7 +2614,7 @@ const FLOOR_MAP = new Uint8Array(MAP_W * MAP_H);
 for (let y = 0; y < MAP_H; y++) {
   for (let x = 0; x < MAP_W; x++) {
     const i = y * MAP_W + x;
-    FLOOR_MAP[i] = ARENA[i] ? 2 : (y >= 16 && x <= 25) ? 1 : (x >= 29 && y <= 9) ? 3 : 0;
+    FLOOR_MAP[i] = ARENA[i] ? 2 : ((y >= 16 && x <= 25) || CLOSET[i]) ? 1 : (x >= 29 && y <= 9) ? 3 : 0;
   }
 }
 
@@ -2649,12 +2735,15 @@ function render() {
 
   // Cast one ray per screen column
   const blink = performance.now() / RACK_BLINK_MS | 0;
+  const lift = closetHeight(), lowering = lift > 0 && lift < 1;
   for (let x = 0; x < SCREEN_W; x++) {
     const camX = 2 * x / SCREEN_W - 1;
     const dist = castRay(player.x, player.y,
                          player.dirX + player.planeX * camX,
-                         player.dirY + player.planeY * camX);
+                         player.dirY + player.planeY * camX, lowering);
     zBuf[x] = dist;
+    liftZ[x] = Infinity;
+    const lDist = liftDist, lSide = liftSide, lWallX = liftWallX;
 
     const lineH = Math.floor(SCREEN_H / dist);
     const y0 = Math.max(0, HALF_H - lineH / 2 | 0);
@@ -2667,7 +2756,18 @@ function render() {
     ctx.fillStyle = FOG_STYLES[Math.min(FOG_STEPS, dist * FOG_RATE / FOG_MAX * FOG_STEPS | 0)];
     ctx.fillRect(x, y0, 1, y1 - y0 + 1);
     if (DOOR_TYPES.includes(rayHit)) drawDoorColumn(x, y0, y1, lineH, rayHit);
-    else if (rayHit === SWITCH && raySide === 0 && player.dirX + player.planeX * camX < 0) drawSwitchColumn(x, lineH);
+    else if (rayHit === SWITCH && raySide === 0 && player.dirX + player.planeX * camX < 0) drawSwitchColumn(x, lineH, game.switchOn);
+    else if (rayHit === BREAKER && raySide === 1 && player.dirY + player.planeY * camX < 0) drawSwitchColumn(x, lineH, game.breakerOn);
+
+    // A closet wall sinking into the floor: the top part of its texture, standing up from the floor line
+    if (lDist < dist) {
+      const lh = SCREEN_H / lDist, bottom = HALF_H + lh / 2, vis = lh * lift;
+      ctx.drawImage(WALL_TEX[CLOSET_WALL][0][lSide], lWallX * TEX_SIZE | 0, 0, 1, TEX_SIZE * lift, x, bottom - vis, 1, vis);
+      ctx.fillStyle = FOG_STYLES[Math.min(FOG_STEPS, lDist * FOG_RATE / FOG_MAX * FOG_STEPS | 0)];
+      ctx.fillRect(x, bottom - vis, 1, vis);
+      liftZ[x] = lDist;
+      liftTop[x] = bottom - vis;
+    }
   }
 
   drawSprites();
@@ -2893,14 +2993,13 @@ function drawDoorColumn(x, y0, y1, lineH, type) {
 }
 
 // Main switch: a steel panel with a status light and a lever (up = off/red, down = on/green)
-function drawSwitchColumn(x, lineH) {
+function drawSwitchColumn(x, lineH, on) {
   const u = rayWallX;
   if (u < 0.28 || u > 0.72) return;
   const top = HALF_H - lineH * 0.2, h = lineH * 0.4;
   ctx.fillStyle = u < 0.31 || u > 0.69 ? '#111' : '#5a6068'; // panel + dark frame
   ctx.fillRect(x, top, 1, h);
   if (u < 0.31 || u > 0.69) return;
-  const on = game.switchOn;
   // Status light (blinks red while off)
   if (u > 0.44 && u < 0.56) {
     ctx.fillStyle = on ? '#30ff60' : (performance.now() / 400 | 0) % 2 ? '#ff3030' : '#601010';
@@ -2990,7 +3089,9 @@ function drawSprites() {
     for (let x = x0; x <= x1; x++) {
       if (ty >= zBuf[x]) continue;
       const texX = Math.min(s.tex.width - 1, Math.floor((x - left) * s.tex.width / w));
-      ctx.drawImage(s.tex, texX, 0, 1, s.tex.height, x, top, 1, h);
+      const vis = ty > liftZ[x] ? Math.min(h, liftTop[x] - top) : h; // behind a sinking closet wall: clip at its top
+      if (vis <= 0) continue;
+      ctx.drawImage(s.tex, texX, 0, 1, s.tex.height * vis / h, x, top, 1, vis);
     }
   }
   ctx.globalAlpha = 1;
@@ -3791,10 +3892,14 @@ function drawHUD() {
     if (game.usePrompt.type === SWITCH) {
       ctx.fillStyle = game.switchOn ? '#30ff60' : '#e8e8e8';
       ctx.fillText(game.switchOn ? 'MAIN SWITCH RESET' : '[ E ]  RESET MAIN SWITCH', SCREEN_W / 2, HALF_H + 50);
+    } else if (game.usePrompt.type === BREAKER) {
+      ctx.fillStyle = game.breakerOn ? '#30ff60' : '#e8e8e8';
+      ctx.fillText(game.breakerOn ? 'CORE BREAKER ON' : '[ E ]  FLIP CORE BREAKER', SCREEN_W / 2, HALF_H + 50);
     } else {
       const type = game.usePrompt.type, locked = doorLocked(type);
       const lockedText = type === SECURITY_DOOR ? 'ACQUIRE CLOSING CANNON TO PROCEED'
-                       : game.bossTriggered ? 'LOCKED' : 'RESET THE MAIN SWITCH TO UNLOCK'; // re-sealed once the fight starts
+                       : game.bossTriggered ? 'LOCKED'                                // re-sealed once the fight starts
+                       : game.switchOn ? 'FLIP THE CORE BREAKER TO UNLOCK' : 'RESET THE MAIN SWITCH TO UNLOCK';
       ctx.fillStyle = locked ? '#ff5050' : '#e8e8e8';
       ctx.fillText(locked ? lockedText : '[ E ]  OPEN', SCREEN_W / 2, HALF_H + 50);
     }
@@ -3825,7 +3930,7 @@ function drawMinimap() {
   ctx.globalAlpha = 0.65;
   for (let r = 0; r < MAP_H; r++) {
     for (let c = 0; c < MAP_W; c++) {
-      ctx.fillStyle = MAP[r][c] === SWITCH && game.switchOn ? '#30ff60' : MAP[r][c] > 0 ? MINIMAP_COLORS[MAP[r][c]] : '#111';
+      ctx.fillStyle = (MAP[r][c] === SWITCH && game.switchOn) || (MAP[r][c] === BREAKER && game.breakerOn) ? '#30ff60' : MAP[r][c] > 0 ? MINIMAP_COLORS[MAP[r][c]] : '#111';
       ctx.fillRect(OX + c * S, OY + r * S, S - 1, S - 1);
     }
   }

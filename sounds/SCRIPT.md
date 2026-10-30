@@ -80,8 +80,15 @@ Plays when you press a key on the title screen.
 |---|---|
 | `locked_core_1` | "Core's locked down. There's an override in here somewhere." |
 
-### Override switch flipped
-Plays when you flip the switch inside the Server Room rack, which unlocks the boss door.
+### Main switch flipped: the monster closet opens
+Plays when you flip the switch inside the Server Room rack and the wall behind you sinks, revealing a closet full of Printers and Routers. Surprised, a bit offended.
+
+| File | Line |
+|---|---|
+| `closet_1` | "That is NOT in the asset inventory." |
+
+### Core breaker flipped
+Plays when you flip the core breaker on the monster closet's back wall, which unlocks the boss door.
 
 | File | Line |
 |---|---|
