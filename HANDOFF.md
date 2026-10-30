@@ -378,6 +378,15 @@ Play-test: the free-standing switch post (previous section) had confusing perspe
 
 ---
 
+### One-press title + tutorial screen ✅
+Play-test: you had to press a key twice to get past the title (once to start the logo animation, once to start).
+- **The title animation now plays by itself:** the art fades in, and `INTRO_AT` (1600 ms) later THE CLOSER slams in, with no key needed. "CLICK OR PRESS ANY KEY TO START" appears `INTRO_READY_MS` after that (~4 s in). Keys before that do nothing (they still unlock audio).
+- **Sound:** browsers only allow audio after a key or click, so on a first visit the slam is usually silent. The riff and slam only play with the animation when `audioRunning()`; queued on a suspended context, they'd go off later. The key press that opens the tutorial unlocks audio, and `syncMusic()` plays the title riff during `'tutorial'`.
+- **Tutorial** (new title stage `'tutorial'`, `drawTutorial()`): an "ENTECH IT // NEW HIRE ORIENTATION" ticket over the dimmed title art. CONTROLS (keycap boxes, `TUTORIAL_CONTROLS`) are on the left; OBJECTIVE (`TUTORIAL_OBJECTIVE`) and TIPS (`TUTORIAL_TIPS`) are on the right, word-wrapped by `wrapText()`. A blue bar fills over `TUTORIAL_DELAY_MS` (5000), then "CLICK OR PRESS ANY KEY TO CONTINUE" blinks. `tutorialReady(now)` gates `advanceTitle()` → `startGame()`, and the click that starts also grabs the pointer lock.
+- R-restart from the death or victory screen still skips both the title and the tutorial.
+
+---
+
 ## Remaining chunks
 
 ### Next session (user's list, 2026-10-29). Not started; discuss before coding

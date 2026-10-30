@@ -793,7 +793,7 @@ function bassNote(t, f, dur, muted) {
 function syncMusic() {
   if (!audio.ctx || audio.ctx.state !== 'running') return;
   const boss = game.boss;
-  const want = !game.started ? (title.stage === 'intro' || title.stage === 'ready' ? 'title' : null)
+  const want = !game.started ? (['intro', 'ready', 'tutorial'].includes(title.stage) ? 'title' : null)
              : game.over || game.won ? null
              : boss ? (boss.state === 'dead' ? null : 'boss') // the DNS's fight; silence for SERVFAIL
              : 'game';
@@ -1942,16 +1942,21 @@ function rearm(name, before) {
 }
 
 // --- Title screen ---
-// Stages: 'loading' (black until the art and its effects are prepared)
-//      → 'art'   (the art fades in with its animations; after PROMPT_DELAY_MS "PRESS ANY KEY" appears — keys do
-//                 nothing before that. This first press is also what lets the browser start sound.)
-//      → 'intro' (THE CLOSER punches in and slams on the first chord of the title riff, ENTECH fades in)
-//      → 'ready' (after INTRO_READY_MS: "press any key to start"; logo glints every few seconds) → game.
+// Stages: 'loading'  (black until the art and its effects are prepared)
+//      → 'art'      (the art fades in with its animations)
+//      → 'intro'    (INTRO_AT later, by itself: THE CLOSER punches in and slams, ENTECH fades in)
+//      → 'ready'    (after INTRO_READY_MS: "press any key to start"; logo glints every few seconds; keys before
+//                    this do nothing)
+//      → 'tutorial' (one key press: controls and objective; after TUTORIAL_DELAY_MS "press any key to continue")
+//      → game.
+// Browsers only allow sound after a key or click, so on a first visit the slam is usually silent and the
+// title riff starts with the key press that opens the tutorial (syncMusic plays it there).
 const title = { stage: 'loading', at: 0, landed: false, shake: 0 };
-const ART_FADE_MS     = 700;   // art fade-in once loaded
-const PROMPT_DELAY_MS = 2200;  // from the art starting to fade in until "PRESS ANY KEY" (≈1.5 s fully visible)
-const SLAM_MS         = 260;   // logo punch-in time; the riff's first chord is scheduled to land with it
-const INTRO_READY_MS  = 2300;  // from the key press until "press any key to start" (≈2 s after the slam)
+const ART_FADE_MS       = 700;   // art fade-in once loaded
+const INTRO_AT          = 1600;  // from the art starting to fade in until the logo slams in
+const SLAM_MS           = 260;   // logo punch-in time; the riff's first chord is scheduled to land with it
+const INTRO_READY_MS    = 2300;  // from the slam starting until "press any key to start"
+const TUTORIAL_DELAY_MS = 5000;  // reading time before the tutorial can be dismissed
 const GLINT_EVERY_MS  = 4000, GLINT_MS = 700;
 
 // The art (1448×1086) fills the top 470 px, centered; blurred copies of it fill the side bars.
@@ -2053,26 +2058,34 @@ function prepTitleFx() {
 }
 
 // Any key / click while the title is up (ignored until the current prompt is showing)
+// A key press or click on the title: open the tutorial, or close it and start
 function advanceTitle() {
   const now = performance.now();
-  if (title.stage === 'art' && now - title.at >= PROMPT_DELAY_MS) {
-    title.stage = 'intro';
+  if (title.stage === 'ready') {
+    title.stage = 'tutorial';
     title.at = now;
-    ensureAudio();
-    playMusic('title', SLAM_MS / 1000);
-  } else if (title.stage === 'ready') {
+    sfx('switch');
+  } else if (tutorialReady(now)) {
     startGame();
   }
 }
+const tutorialReady = now => title.stage === 'tutorial' && now - title.at >= TUTORIAL_DELAY_MS;
+
+// Sound already allowed (e.g. the player clicked the page): the riff and slam play with the animation
+const audioRunning = () => audio.ctx && audio.ctx.state === 'running';
 
 function updateTitle(now) {
   title.shake = title.shake < 0.3 ? 0 : title.shake * 0.85;
   if (title.stage === 'loading' && titleArt.ready) { title.stage = 'art'; title.at = now; }
+  if (title.stage === 'art' && now - title.at >= INTRO_AT) {
+    title.stage = 'intro';
+    title.at = now;
+    if (audioRunning()) playMusic('title', SLAM_MS / 1000);
+  }
   if (title.stage === 'intro' && !title.landed && now - title.at >= SLAM_MS) {
     title.landed = true;
     title.shake = 16;
-    sfx('slam');
-    sfx('explosion');
+    if (audioRunning()) { sfx('slam'); sfx('explosion'); } // (queued on a suspended context they'd boom later)
   }
   if (title.stage === 'intro' && now - title.at >= INTRO_READY_MS) title.stage = 'ready';
 }
@@ -2136,7 +2149,7 @@ canvas.addEventListener('mousedown', e => {
   ensureAudio();
   if (e.button !== 0 || game.over || game.won) return;
   if (!game.started) {
-    const starting = title.stage === 'ready';
+    const starting = tutorialReady(performance.now());
     advanceTitle();
     if (!starting) return; // only the click that starts the game grabs the mouse
   }
@@ -2831,6 +2844,8 @@ function drawTitle() {
     return;
   }
 
+  if (title.stage === 'tutorial') { drawTutorial(now, t); return; }
+
   const intro = title.stage === 'intro' || title.stage === 'ready';
   const landed = intro && t >= SLAM_MS, slamming = intro && !landed, fx = titleArt.fx, [ax, ay] = ART_ANCHOR;
   // With masks only the logo punches in; without them (file://) the whole art does
@@ -2891,10 +2906,7 @@ function drawTitle() {
   ctx.fillRect(0, 470, SCREEN_W, 1);
   const blink = (now / 450 | 0) % 2 === 0;
   ctx.font = 'bold 15px monospace';
-  if (title.stage === 'art' && t >= PROMPT_DELAY_MS && blink) {
-    ctx.fillStyle = '#e8e8e8';
-    ctx.fillText('PRESS ANY KEY', cx, 486);
-  } else if (title.stage === 'ready' && blink) {
+  if (title.stage === 'ready' && blink) {
     ctx.fillStyle = '#3dff73';
     ctx.fillText('CLICK OR PRESS ANY KEY TO START', cx, 486);
   }
@@ -2905,6 +2917,136 @@ function drawTitle() {
   ctx.textAlign = 'right';
   ctx.fillText('SFX: Freedoom (BSD)', SCREEN_W - 10, 486);
   ctx.textAlign = 'left';
+  ctx.textBaseline = 'alphabetic';
+}
+
+// Tutorial (between the title and the game): controls and objective on a "new hire orientation" ticket over the
+// dimmed title art. A bar fills over TUTORIAL_DELAY_MS, then "press any key to continue" blinks.
+const TUTORIAL_CONTROLS = [
+  ['W A S D',          'Move'],
+  ['← →  /  MOUSE',    'Turn'],
+  ['CLICK  /  SPACE',  'Fire'],
+  ['1 2 3  /  Q',      'Switch weapon'],
+  ['E',                'Use doors and switches'],
+  ['F',                'Flush DNS Cache'],
+  ['M  /  N',          'Map  /  Sound'],
+  ['ALT + ENTER',      'Fullscreen'],
+];
+const TUTORIAL_OBJECTIVE = [
+  "The DNS is down, and it's taking the whole office with it.",
+  '1.  Fight through the office to the IT Closet and grab the Closing Cannon.',
+  '2.  Get into the Server Room and restore access to the core.',
+  "3.  Resolve the DNS. (It's always DNS.)",
+];
+const TUTORIAL_TIPS = [
+  'Coffee restores SLA (your health).',
+  'Keycaps and closures are ammo.',
+  'Out of ammo? Swing the mouse.',
+  'Save your Flush DNS Cache for the DNS. It stuns it.',
+];
+
+// Word-wrap text to maxW at the current font; returns the lines
+function wrapText(text, maxW) {
+  const lines = [];
+  let line = '';
+  for (const word of text.split(' ')) {
+    const next = line ? line + ' ' + word : word;
+    if (line && ctx.measureText(next).width > maxW) { lines.push(line); line = word; } else line = next;
+  }
+  if (line) lines.push(line);
+  return lines;
+}
+
+function drawTutorial(now, t) {
+  const cx = SCREEN_W / 2, X0 = 50, X1 = SCREEN_W - 50, Y0 = 34, Y1 = 446;
+  ctx.drawImage(titleArt.sides, 0, 0);
+  ctx.fillStyle = 'rgba(0,0,0,0.45)';
+  ctx.fillRect(0, 0, SCREEN_W, SCREEN_H);
+  ctx.globalAlpha = Math.min(1, t / 250); // quick fade in
+
+  // The ticket
+  ctx.fillStyle = 'rgba(8,12,18,0.94)';
+  ctx.fillRect(X0, Y0, X1 - X0, Y1 - Y0);
+  ctx.fillStyle = '#0d2a40';
+  ctx.fillRect(X0, Y0, X1 - X0, 34);
+  ctx.strokeStyle = '#2aa4ff';
+  ctx.lineWidth = 2;
+  ctx.strokeRect(X0 + 1, Y0 + 1, X1 - X0 - 2, Y1 - Y0 - 2);
+  ctx.textBaseline = 'middle';
+  ctx.textAlign = 'left';
+  ctx.font = 'bold 15px monospace';
+  ctx.fillStyle = '#2aa4ff';
+  ctx.fillText('ENTECH IT  //  NEW HIRE ORIENTATION', X0 + 16, Y0 + 17);
+  ctx.textAlign = 'right';
+  ctx.font = 'bold 11px monospace';
+  ctx.fillStyle = '#ff5050';
+  ctx.fillText('PRIORITY: CRITICAL', X1 - 16, Y0 + 17);
+
+  const heading = (text, x, y) => {
+    ctx.textAlign = 'left';
+    ctx.font = 'bold 13px monospace';
+    ctx.fillStyle = '#3dff73';
+    ctx.fillText(text, x, y);
+    ctx.fillStyle = '#1f4a2c';
+    ctx.fillRect(x, y + 10, 300, 1);
+  };
+
+  // Left: controls, each key in a keycap box
+  const LX = X0 + 24;
+  heading('CONTROLS', LX, Y0 + 60);
+  TUTORIAL_CONTROLS.forEach(([key, what], i) => {
+    const y = Y0 + 92 + i * 34;
+    ctx.font = 'bold 11px monospace';
+    const w = ctx.measureText(key).width + 16;
+    ctx.fillStyle = '#26272b';
+    ctx.fillRect(LX, y - 11, w, 22);
+    ctx.fillStyle = '#4b4d54';
+    ctx.fillRect(LX, y - 11, w, 19);
+    ctx.fillStyle = '#e8e8e8';
+    ctx.textAlign = 'left';
+    ctx.fillText(key, LX + 8, y - 1);
+    ctx.font = '12px monospace';
+    ctx.fillStyle = '#bbb';
+    ctx.fillText(what, LX + 132, y - 1);
+  });
+
+  // Right: objective and tips
+  const RX = 404, RW = X1 - 24 - RX;
+  heading('OBJECTIVE', RX, Y0 + 60);
+  ctx.font = '12px monospace';
+  let y = Y0 + 90;
+  TUTORIAL_OBJECTIVE.forEach((line, i) => {
+    ctx.fillStyle = i === 0 ? '#e8e8e8' : '#bbb';
+    for (const l of wrapText(line, RW)) { ctx.fillText(l, RX, y); y += 17; }
+    y += 6;
+  });
+  y += 10;
+  heading('TIPS', RX, y);
+  y += 30;
+  ctx.font = '12px monospace';
+  ctx.fillStyle = '#bbb';
+  for (const tip of TUTORIAL_TIPS) for (const l of wrapText('·  ' + tip, RW)) { ctx.fillText(l, RX, y); y += 19; }
+
+  // Bottom: reading bar, then the prompt
+  ctx.textAlign = 'center';
+  if (t < TUTORIAL_DELAY_MS) {
+    const k = t / TUTORIAL_DELAY_MS;
+    ctx.fillStyle = '#1a1a1a';
+    ctx.fillRect(cx - 120, Y1 - 30, 240, 6);
+    ctx.fillStyle = '#2aa4ff';
+    ctx.fillRect(cx - 120, Y1 - 30, 240 * k, 6);
+  } else if ((now / 450 | 0) % 2 === 0) {
+    ctx.font = 'bold 15px monospace';
+    ctx.fillStyle = '#3dff73';
+    ctx.fillText('CLICK OR PRESS ANY KEY TO CONTINUE', cx, Y1 - 26);
+  }
+  ctx.globalAlpha = 1;
+
+  // Sound status, bottom left as on the title
+  ctx.font = '10px monospace';
+  ctx.fillStyle = '#555';
+  ctx.textAlign = 'left';
+  ctx.fillText(`sound ${audio.muted ? 'OFF' : 'ON'} [N]`, 10, 486);
   ctx.textBaseline = 'alphabetic';
 }
 
