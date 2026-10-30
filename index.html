@@ -146,7 +146,10 @@ const game = {
 const WEAPONS = {
   keyboard: { slot: 'KEYBOARD v1.0',  short: 'KEYBOARD', key: 1, ammoLabel: 'KEYCAPS',  ammo: 'ammo',       max: 'maxAmmo',       COOL_MS: 650, KICK: 44, voiceEmpty: 'empty' },
   cannon:   { slot: 'CLOSING CANNON', short: 'CANNON',   key: 2, ammoLabel: 'CLOSURES', ammo: 'cannonAmmo', max: 'maxCannonAmmo', COOL_MS: 950, KICK: 44, voiceEmpty: 'empty_cannon' },
+  // Melee, the weapon of last resort (Doom's fist): no ammo, swung by its cord
+  mouse:    { slot: 'MOUSE',          short: 'MOUSE',    key: 3, ammoLabel: 'MELEE',    ammo: null,         max: null,            COOL_MS: 400, KICK: 0,  melee: true },
 };
+const WEAPON_ORDER = ['keyboard', 'cannon', 'mouse'];
 const EMPTY_ALERT_MS = 1800;
 const SWITCH_MS = 160; // per half (lower, then raise)
 const FLASH_MS  = 130; // muzzle flash fade
@@ -162,6 +165,7 @@ const weapon = {
   kickY:    0,      // positive = pushed down off-screen
   flash:    0,
   bobAmp:   0,      // walking bob strength, 0 (standing) → 1 (moving full speed)
+  meleeDue: false,  // a mouse swing whose hit hasn't landed yet
 };
 // Doom-style walking bob: side to side in a U-shaped arc (x = cos, y = |sin|), dipping at the middle of each swing
 const BOB_X        = 34;   // px each way
@@ -184,6 +188,13 @@ const SPLASH_RADIUS = 2.2;
 const SPLASH_DMG    = 140; // direct hit still kills a Printer
 const SELF_DMG_MULT = 0.4;
 const EXPLOSION_MS  = 350;
+
+// Mouse — melee like Doom's fist: Doom's damage roll (1–10 × 2) scaled to this game, about 1/7 of a
+// point-blank keyboard blast. Reaches only what's right in front of you, and turns you to face what it hits.
+const MELEE_RANGE   = 1.0;   // tiles from you to the target's edge
+const MELEE_DMG     = 3;     // × 1–10 → 3–30 (Router 2 hits, Printer ~7, Shadow IT ~16)
+const MELEE_SPREAD  = 0.05;  // radians of random aim wobble
+const MELEE_HIT_MS  = 110;   // into the swing, when the mouse connects
 
 // --- Audio ---
 // Sound effects are synthesized with Web Audio (no files). Voice lines are recordings in sounds/voice/
@@ -317,6 +328,14 @@ const SFX = {
   slam:    { play: (o, t) => { noise(o, t, { ms: 400, vol: 0.8, f0: 600, f1: 60, filter: 'lowpass', attack: 1 }); tone(o, t, { type: 'sine', f0: 70, f1: 35, ms: 500, vol: 0.6 }); } },
   // Screens
   start:   { play: (o, t) => [262, 330, 392, 523].forEach((f, i) => tone(o, t + i * 0.05, { f0: f, ms: 200, vol: 0.1 })) },
+  // Mouse: a whoosh on every swing; a heavy thud with a plastic crack on a hit; a light knock off a wall
+  swing:      { play: (o, t) => noise(o, t, { ms: 150, vol: 0.2, f0: 500, f1: 1900, q: 2, attack: 50 }) },
+  punch:      { play: (o, t) => {
+    noise(o, t, { ms: 130, vol: 0.7, f0: 900, f1: 90, filter: 'lowpass' });
+    tone(o, t, { type: 'sine', f0: 110, f1: 45, ms: 140, vol: 0.5 });
+    noise(o, t, { ms: 25, vol: 0.35, f0: 3200, q: 6 });
+  } },
+  mouse_wall: { play: (o, t) => { noise(o, t, { ms: 40, vol: 0.35, f0: 2600, q: 5 }); tone(o, t, { f0: 180, f1: 90, ms: 60, vol: 0.15 }); } },
   type:    { gap: 30, play: (o, t) => noise(o, t, { ms: 18, vol: 0.12, f0: 3500 + Math.random() * 1500, q: 6 }) },
   victory: { play: (o, t) => [523, 659, 784, 1047].forEach((f, i) => tone(o, t + i * 0.09, { type: 'triangle', f0: f, ms: 1400 - i * 90, vol: 0.18, attack: 10 })) },
 };
@@ -1195,7 +1214,9 @@ const WINDUP_GLOW_TEX  = { printer: TEX.pageFlash, router: TEX.muzzle, shadow: T
 const PICKUPS = {
   keycaps:  { tex: TEX.keycaps,  scale: 0.24, apply: k => {
     if (game.ammo >= game.maxAmmo) return false;
+    const before = game.ammo;
     game.ammo = Math.min(game.maxAmmo, game.ammo + k.amount);
+    rearm('keyboard', before);
     return `+${k.amount} KEYCAPS`;
   }, sound: 'ammo', voice: 'ammo' },
   coffee:   { tex: TEX.coffee,   scale: 0.21, apply: () => {
@@ -1205,7 +1226,9 @@ const PICKUPS = {
   }, sound: 'heal', voice: 'health' },
   closures: { tex: TEX.closures, scale: 0.22, apply: () => {
     if (game.cannonAmmo >= game.maxCannonAmmo) return false;
+    const before = game.cannonAmmo;
     game.cannonAmmo = Math.min(game.maxCannonAmmo, game.cannonAmmo + 3);
+    rearm('cannon', before);
     return '+3 CLOSURES';
   }, sound: 'ammo', voice: 'closures' },
   cannon:   { tex: TEX.cannon,   scale: 0.24, apply: () => {
@@ -1811,28 +1834,36 @@ function switchWeapon(name) {
   // otherwise the switch starts as soon as the current shot finishes cooling
 }
 
+// Q / mouse wheel: the next weapon you can use (the mouse always can)
 function cycleWeapon() {
-  switchWeapon((weapon.next || game.weapon) === 'keyboard' ? 'cannon' : 'keyboard');
+  const cur = WEAPON_ORDER.indexOf(weapon.next || game.weapon);
+  for (let i = 1; i < WEAPON_ORDER.length; i++) {
+    const name = WEAPON_ORDER[(cur + i) % WEAPON_ORDER.length];
+    if (hasAmmo(name)) { switchWeapon(name); return; }
+  }
 }
 
 function hasAmmo(name) {
+  if (WEAPONS[name].melee) return true;
   return (name === 'keyboard' || game.hasCannon) && game[WEAPONS[name].ammo] > 0;
 }
 
-// The current weapon just ran dry (last shot fired) or was dry-fired: flash an alert and,
-// if the other weapon has ammo, switch to it (the swap starts once the current shot finishes cooling)
+// The current weapon just ran dry (last shot fired) or was dry-fired: flash an alert and switch to the
+// other gun if it has ammo, otherwise to the mouse (the swap starts once the current shot finishes cooling)
 function onEmpty(dryFire) {
   const w = WEAPONS[game.weapon];
   const other = game.weapon === 'keyboard' ? 'cannon' : 'keyboard';
+  const next = hasAmmo(other) ? other : 'mouse';
   game.emptyAt = performance.now();
-  if (hasAmmo(other)) {
-    game.emptyMsg = `${w.ammoLabel} EMPTY  —  SWITCHING TO ${WEAPONS[other].short}`;
-    switchWeapon(other);
-  } else {
-    game.emptyMsg = game.hasCannon ? 'NO AMMO' : `OUT OF ${w.ammoLabel}`;
-  }
+  game.emptyMsg = `${w.ammoLabel} EMPTY  —  SWITCHING TO ${WEAPONS[next].short}`;
+  switchWeapon(next);
   if (dryFire) sfx('empty');
   say(w.voiceEmpty);
+}
+
+// Like Doom: picking up ammo for an empty gun while swinging the mouse switches straight to that gun
+function rearm(name, before) {
+  if (before <= 0 && (weapon.next || game.weapon) === 'mouse' && hasAmmo(name)) switchWeapon(name);
 }
 
 // --- Title screen ---
@@ -2016,6 +2047,7 @@ document.addEventListener('keydown', e => {
   if (e.code === 'Space') shoot();
   if (e.code === 'Digit1') switchWeapon('keyboard');
   if (e.code === 'Digit2') switchWeapon('cannon');
+  if (e.code === 'Digit3') switchWeapon('mouse');
   if (e.code === 'KeyQ') cycleWeapon();
   if (e.code === 'KeyE') useAction();
   if (e.code === 'KeyF') useFlush();
@@ -2044,6 +2076,13 @@ document.addEventListener('mousemove', e => {
 function shoot() {
   const w = WEAPONS[game.weapon];
   if (game.over || game.won || weapon.state !== 'idle') return;
+  if (w.melee) { // the hit lands MELEE_HIT_MS into the swing (meleeHit, from update)
+    weapon.state    = 'firing';
+    weapon.fireAt   = performance.now();
+    weapon.meleeDue = true;
+    sfx('swing');
+    return;
+  }
   if (game[w.ammo] <= 0) { onEmpty(true); return; }
   const now = performance.now();
   game[w.ammo]--;
@@ -2107,6 +2146,39 @@ function shoot() {
   game.shake     = Math.max(game.shake, 4);
   game.fireFlash = 1;
   alertEnemies(now);
+}
+
+// Mouse connects: one short ray at the crosshair. The nearest enemy whose edge is within MELEE_RANGE takes
+// 3–30 and you turn to face it (as Doom's punch does); a wall in reach just gets a puff. Either way it's noisy.
+function meleeHit(now) {
+  const a  = (Math.random() - 0.5) * 2 * MELEE_SPREAD;
+  const c  = Math.cos(a), s = Math.sin(a);
+  const dx = player.dirX * c - player.dirY * s;
+  const dy = player.dirX * s + player.dirY * c;
+  const wallT = castRay(player.x, player.y, dx, dy);
+  let best = null, bestT = Infinity;
+  for (const e of enemies) {
+    if (e.state === 'dead') continue;
+    const ex = e.x - player.x, ey = e.y - player.y;
+    const t  = ex * dx + ey * dy;
+    if (t <= 0 || t - e.def.radius > MELEE_RANGE || t >= wallT || t >= bestT) continue;
+    if (Math.abs(ex * dy - ey * dx) < e.def.radius) { best = e; bestT = t; }
+  }
+  alertEnemies(now);
+  if (best) {
+    const hx = player.x + dx * (bestT - best.def.radius), hy = player.y + dy * (bestT - best.def.radius);
+    addEffect(hx, hy, best.def.scale * 0.45, HIT_TEX[best.type], 0.2, 260, 0.05);
+    sfx('punch');
+    const killed = damageEnemy(best, MELEE_DMG * (1 + Math.random() * 10 | 0), now);
+    game.hitMarker = 1; game.killMarker = killed;
+    game.shake = Math.max(game.shake, 3);
+    // Face the target
+    const want = Math.atan2(best.y - player.y, best.x - player.x), have = Math.atan2(player.dirY, player.dirX);
+    rotate(Math.atan2(Math.sin(want - have), Math.cos(want - have)));
+  } else if (wallT <= MELEE_RANGE) {
+    addEffect(player.x + dx * (wallT - 0.08), player.y + dy * (wallT - 0.08), 0.3, TEX.puff, 0.2, 300, 0.1);
+    sfx('mouse_wall');
+  }
 }
 
 function pelletDamage(dist) {
@@ -2232,6 +2304,7 @@ function update() {
   // Weapon animation
   const now  = performance.now();
   const kick = WEAPONS[game.weapon].KICK;
+  if (weapon.meleeDue && now - weapon.fireAt >= MELEE_HIT_MS) { weapon.meleeDue = false; meleeHit(now); }
   if (weapon.state === 'firing') {
     const t = (now - weapon.fireAt) / weapon.FIRE_MS;
     weapon.kickY = kick * Math.min(t, 1);
@@ -2929,6 +3002,7 @@ function drawWeapon() {
   ctx.save();
   ctx.translate(Math.cos(a) * BOB_X * weapon.bobAmp, Math.abs(Math.sin(a)) * BOB_Y * weapon.bobAmp);
   if (game.weapon === 'cannon') drawCannon();
+  else if (game.weapon === 'mouse') drawMouse();
   else drawKeyboard();
   ctx.restore();
 }
@@ -3192,6 +3266,166 @@ function drawKeyboard() {
   for (let y = 8; y < 36; y++) { glow(Math.round(kbL(y)) + 1, y, y); glow(Math.round(kbR(y)) - 2, y, 60 - y); }
   wctx.drawImage(KEYBOARD_HANDS, 0, 0);
   blitWeapon(KB_W, KB_H, left, top);
+}
+
+// --- Mouse (melee): a gaming mouse swung by its cord from the right hand, drawn fresh each frame in wbuf ---
+// Keyframes [p, hand x, hand y, mouse x, mouse y, mouse scale, cord slack] in wbuf pixels, p = 0→1 over the
+// swing: hang at rest → wind back → whip up to the crosshair (the hit, at MELEE_HIT_MS) → follow through → hang.
+// The mouse's front (where the cord plugs in) always points back along the cord toward the hand.
+const MOUSE_LEFT = SCREEN_W - WBUF_W * WPX - 8, MOUSE_TOP = SCREEN_H - WBUF_H * WPX;
+const MOUSE_KEYS = [
+  [0,     74, 50, 48, 70, 1,    1],
+  [0.12,  80, 60, 84, 76, 1,    0.6],
+  [0.275, 48, 40, 12, 30, 0.6,  0],
+  [0.42,  54, 46, 20, 42, 0.7,  0.3],
+  [1,     74, 50, 48, 70, 1,    1],
+];
+const MOUSE_LEN = 26, MOUSE_WID = 18;
+const MOUSE_CORD_OUT = [-8, 7]; // where the cord leaves the fist, from the hand's center
+function mousePose(p) {
+  let i = 0;
+  while (i < MOUSE_KEYS.length - 2 && p > MOUSE_KEYS[i + 1][0]) i++;
+  const a = MOUSE_KEYS[i], b = MOUSE_KEYS[i + 1];
+  let t = Math.min(1, Math.max(0, (p - a[0]) / (b[0] - a[0])));
+  t = t * t * (3 - 2 * t);
+  const v = a.map((x, k) => x + (b[k] - x) * t);
+  return { hx: v[1], hy: v[2], mx: v[3], my: v[4], s: v[5], slack: v[6] };
+}
+
+// HSL (h in degrees, s/l 0–1) → [r, g, b]
+function hslRgb(h, s, l) {
+  const f = n => { const k = (n + h / 30) % 12; return 255 * (l - s * Math.min(l, 1 - l) * Math.max(-1, Math.min(k - 3, 9 - k, 1))); };
+  return [f(0), f(8), f(4)];
+}
+
+// Plot the mouse body pixel by pixel into img: an egg-shaped dome lit from the upper left, two buttons split by
+// a seam at the front, an RGB scroll wheel and side strips that cycle hue like the keyboard's underglow
+function drawMouseBody(img, mx, my, ang, s, alpha, now) {
+  const hl = MOUSE_LEN / 2 * s, hw = MOUSE_WID / 2 * s, fx = Math.cos(ang), fy = Math.sin(ang);
+  const rad = Math.ceil(hl) + 1, W = img.width, H = img.height, d = img.data;
+  const wheel = hslRgb(now * 0.08 % 360, 0.9, 0.55), strip = hslRgb((now * 0.08 + 120) % 360, 0.85, 0.5);
+  const put = (x, y, r, g, b) => {
+    const i = (y * W + x) * 4, a0 = d[i + 3] / 255, a = alpha + a0 * (1 - alpha);
+    d[i]     = (r * alpha + d[i] * a0 * (1 - alpha)) / a;
+    d[i + 1] = (g * alpha + d[i + 1] * a0 * (1 - alpha)) / a;
+    d[i + 2] = (b * alpha + d[i + 2] * a0 * (1 - alpha)) / a;
+    d[i + 3] = a * 255;
+  };
+  for (let y = Math.max(0, Math.floor(my - rad)); y <= Math.min(H - 1, my + rad); y++) for (let x = Math.max(0, Math.floor(mx - rad)); x <= Math.min(W - 1, mx + rad); x++) {
+    const rx = x + 0.5 - mx, ry = y + 0.5 - my;
+    const v = -(rx * fx + ry * fy) / hl, u = (rx * -fy + ry * fx) / hw; // v = -1 at the front, +1 at the back
+    const w = 0.8 + 0.2 * v, q = (u / w) ** 2 + v * v;
+    if (q > 1) continue;
+    const n = Math.sqrt(1 - q);
+    let col = [58, 60, 70], k = 0.35 + 0.6 * n + 0.45 * Math.exp(-(((u + 0.35) / 0.25) ** 2) - (((v + 0.1) / 0.5) ** 2));
+    if (v < -0.12) col = [84, 86, 98];                                         // buttons
+    if (v < -0.12 && Math.abs(u) < 0.09) { col = [14, 14, 18]; k = 1; }       // seam between them
+    if (Math.abs(v + 0.12) < 0.07) { col = [14, 14, 18]; k = 1; }             // seam behind them
+    if (Math.abs(u) < 0.16 && v > -0.78 && v < -0.36) { col = wheel; k = 0.8 + 0.4 * n; }   // scroll wheel
+    else if (Math.abs(u) / w > 0.8 && v > -0.05 && v < 0.7) { col = strip; k = 1; }       // side light strips
+    put(x, y, Math.min(255, col[0] * k), Math.min(255, col[1] * k), Math.min(255, col[2] * k));
+  }
+}
+
+// Fill a convex polygon on whole pixels of img (no anti-aliasing, so it stays chunky); col = [r, g, b]
+function fillPoly(img, pts, col) {
+  const W = img.width, H = img.height, d = img.data, ys = pts.map(p => p[1]);
+  for (let y = Math.max(0, Math.floor(Math.min(...ys))); y <= Math.min(H - 1, Math.max(...ys)); y++) {
+    let x0 = Infinity, x1 = -Infinity;
+    for (let i = 0; i < pts.length; i++) {
+      const [ax, ay] = pts[i], [bx, by] = pts[(i + 1) % pts.length], cy = y + 0.5;
+      if ((ay <= cy) === (by <= cy)) continue;
+      const x = ax + (cy - ay) / (by - ay) * (bx - ax);
+      x0 = Math.min(x0, x); x1 = Math.max(x1, x);
+    }
+    for (let x = Math.max(0, Math.round(x0)); x < Math.min(W, Math.round(x1)); x++) {
+      const i = (y * W + x) * 4;
+      d[i] = col[0]; d[i + 1] = col[1]; d[i + 2] = col[2]; d[i + 3] = 255;
+    }
+  }
+}
+const hexRgb = h => [1, 3, 5].map(i => parseInt(h.slice(i, i + 2), 16));
+
+// Gloved fist from behind (22×18), the cord coming out of its bottom-left
+const MOUSE_HAND_W = 22, MOUSE_HAND_H = 18;
+const MOUSE_HAND = makeTex(MOUSE_HAND_W, MOUSE_HAND_H, (g, R) => {
+  R(GLOVE, 3, 4, 16, 13);                                                   // fist
+  R(GLOVE_HI, 4, 2, 14, 3);                                                 // knuckles
+  for (const x of [7, 11, 15]) R('#0e0e10', x, 2, 1, 6);                   // between the fingers
+  for (const x of [4, 8, 12, 16]) R('#5a5a66', x, 2, 2, 1);                // lit knuckle tops
+  R('#232328', 0, 8, 5, 7); R(GLOVE_HI, 1, 8, 3, 1);                       // thumb wrapped over the side
+  R('#0e0e10', 3, 16, 16, 1);                                               // underside shadow
+});
+const MOUSE_HAND_PX = MOUSE_HAND.getContext('2d').getImageData(0, 0, MOUSE_HAND_W, MOUSE_HAND_H);
+
+// 1 px dark outline around everything solid in img (faint motion ghosts are skipped)
+function outlineImg(img) {
+  const w = img.width, h = img.height, d = img.data, a = new Uint8Array(w * h);
+  for (let i = 0; i < w * h; i++) a[i] = d[i * 4 + 3] > 240 ? 1 : 0;
+  for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) {
+    if (a[y * w + x]) continue;
+    if ((x > 0 && a[y * w + x - 1]) || (x < w - 1 && a[y * w + x + 1]) || (y > 0 && a[(y - 1) * w + x]) || (y < h - 1 && a[(y + 1) * w + x])) {
+      const i = (y * w + x) * 4;
+      d[i] = 10; d[i + 1] = 10; d[i + 2] = 12; d[i + 3] = 255;
+    }
+  }
+}
+
+// The mouse is rasterized straight into one pixel buffer each frame (reading canvas pixels back is slow),
+// then put on its own canvas and copied into the scratch canvas for tinting
+const mbuf = makeTex(WBUF_W, WBUF_H, () => {}), mctx = mbuf.getContext('2d');
+const mimg = mctx.createImageData(WBUF_W, WBUF_H);
+const MOUSE_CORD = [106, 108, 118], SLEEVE_RGB = hexRgb(SLEEVE), SLEEVE_HI_RGB = hexRgb(SLEEVE_HI), CUFF_RGB = hexRgb(CUFF);
+
+function drawMouse() {
+  const now = performance.now();
+  const swinging = weapon.state === 'firing' || weapon.state === 'cooling';
+  const p = swinging ? Math.min(1, (now - weapon.fireAt) / weapon.COOL_MS) : 0;
+  const pose = mousePose(p);
+  // At rest the mouse sways on its cord like a pendulum (more when walking)
+  const sway = (1 - Math.min(1, p * 8)) * Math.sin(now * 0.0035) * (1.5 + 2.5 * weapon.bobAmp);
+  const mx = pose.mx + sway, my = pose.my;
+  const ax = pose.hx + MOUSE_CORD_OUT[0], ay = pose.hy + MOUSE_CORD_OUT[1];   // where the cord leaves the fist
+  const ang = Math.atan2(ay - my, ax - mx);                                       // mouse front points at the hand
+  const fx = mx + Math.cos(ang) * MOUSE_LEN / 2 * pose.s, fy = my + Math.sin(ang) * MOUSE_LEN / 2 * pose.s;
+  const img = mimg, d = img.data, W = WBUF_W;
+  d.fill(0);
+
+  // Cord: a sagging curve from the fist to the mouse's front, pulled straight during the strike
+  const cxm = (ax + fx) / 2, cym = (ay + fy) / 2 + 12 * pose.slack;
+  for (let i = 0; i <= 48; i++) {
+    const t = i / 48, it = 1 - t;
+    const x = Math.round(it * it * ax + 2 * it * t * cxm + t * t * fx), y = Math.round(it * it * ay + 2 * it * t * cym + t * t * fy);
+    if (x < 0 || y < 0 || x >= W || y >= WBUF_H) continue;
+    const k = (y * W + x) * 4;
+    d[k] = MOUSE_CORD[0]; d[k + 1] = MOUSE_CORD[1]; d[k + 2] = MOUSE_CORD[2]; d[k + 3] = 255;
+  }
+  // Motion ghosts trailing the mouse as it whips through the strike
+  if (p > 0.14 && p < 0.34) for (const [dp, al] of [[0.07, 0.18], [0.035, 0.32]]) {
+    const g = mousePose(p - dp), gang = Math.atan2(g.hy + MOUSE_CORD_OUT[1] - g.my, g.hx + MOUSE_CORD_OUT[0] - g.mx);
+    drawMouseBody(img, g.mx, g.my, gang, g.s, al, now);
+  }
+  drawMouseBody(img, mx, my, ang, pose.s, 1, now);
+  // Forearm in a suit sleeve, from the wrist off the bottom-right corner, with the shirt cuff at the wrist
+  const wx = pose.hx + 4, wy = pose.hy + 7, ex = pose.hx + 44, ey = pose.hy + 62;
+  const len = Math.hypot(ex - wx, ey - wy), px = -(ey - wy) / len, py = (ex - wx) / len;
+  const along = (t, r) => [wx + (ex - wx) * t + px * r, wy + (ey - wy) * t + py * r];
+  fillPoly(img, [along(0.06, -8), along(0.06, 8), along(1, 13), along(1, -13)], SLEEVE_RGB);
+  fillPoly(img, [along(0.06, -8), along(0.06, -4), along(1, -8), along(1, -13)], SLEEVE_HI_RGB);
+  fillPoly(img, [along(0, -8), along(0, 8), along(0.08, 8.3), along(0.08, -8.3)], CUFF_RGB);
+  // Fist on top
+  const hx0 = Math.round(pose.hx - MOUSE_HAND_W / 2), hy0 = Math.round(pose.hy - MOUSE_HAND_H / 2), hd = MOUSE_HAND_PX.data;
+  for (let y = 0; y < MOUSE_HAND_H; y++) for (let x = 0; x < MOUSE_HAND_W; x++) {
+    const s = (y * MOUSE_HAND_W + x) * 4, X = hx0 + x, Y = hy0 + y;
+    if (!hd[s + 3] || X < 0 || Y < 0 || X >= W || Y >= WBUF_H) continue;
+    const k = (Y * W + X) * 4;
+    d[k] = hd[s]; d[k + 1] = hd[s + 1]; d[k + 2] = hd[s + 2]; d[k + 3] = 255;
+  }
+  outlineImg(img);
+  mctx.putImageData(img, 0, 0);
+  wctx.clearRect(0, 0, WBUF_W, WBUF_H);
+  wctx.drawImage(mbuf, 0, 0);
+  blitWeapon(WBUF_W, WBUF_H, MOUSE_LEFT, MOUSE_TOP + weapon.kickY + idleBob());
 }
 
 // Keycaps thrown by a keyboard blast: fly from the keyboard toward the crosshair, spinning and shrinking
@@ -3472,10 +3706,10 @@ function drawHUD() {
   // Weapon slots: key, name, ammo. Active = green frame; empty = red; not picked up yet = dark
   const now = performance.now();
   const blink = (now / 250 | 0) % 2 === 0;
-  ['keyboard', 'cannon'].forEach((name, i) => {
-    const W = WEAPONS[name], owned = name === 'keyboard' || game.hasCannon;
-    const n = game[W.ammo], active = name === game.weapon, empty = owned && n <= 0;
-    const sx = 262 + i * 142, sy = SCREEN_H - 31, sw = 134, sh = 26;
+  WEAPON_ORDER.forEach((name, i) => {
+    const W = WEAPONS[name], owned = name !== 'cannon' || game.hasCannon;
+    const n = W.melee ? '∞' : game[W.ammo], active = name === game.weapon, empty = owned && !W.melee && n <= 0;
+    const sx = 255 + i * 98, sy = SCREEN_H - 31, sw = 92, sh = 26;
     ctx.fillStyle = active ? 'rgba(30,90,45,0.55)' : 'rgba(255,255,255,0.03)';
     ctx.fillRect(sx, sy, sw, sh);
     ctx.strokeStyle = !owned ? '#222' : active ? (empty && blink ? '#ff3030' : '#3dff73') : empty ? '#502020' : '#444';
@@ -3491,7 +3725,7 @@ function drawHUD() {
     // Name and ammo
     ctx.textAlign = 'left';
     ctx.fillStyle = !owned ? '#333' : empty ? '#a03030' : active ? '#e8e8e8' : '#888';
-    ctx.fillText(owned ? W.slot : '- - -', sx + 25, sy + 13);
+    ctx.fillText(owned ? W.short : '- - -', sx + 25, sy + 13);
     ctx.textAlign = 'right';
     ctx.font = 'bold 12px monospace';
     ctx.fillStyle = !owned ? '#333' : empty ? '#ff3030' : active ? '#3dff73' : '#888';
@@ -3502,20 +3736,26 @@ function drawHUD() {
   ctx.fillStyle = '#333';
   ctx.fillRect(SCREEN_W - 250, SCREEN_H - 34, 1, 32);
 
-  // Ammo for the current weapon (pulses red when empty)
-  const ammo = game[w.ammo], max = game[w.max];
-  ctx.fillStyle = ammo <= 0 ? (blink ? '#ff3030' : '#601010') : '#666';
+  // Ammo for the current weapon (pulses red when empty); the mouse needs none
   ctx.font = 'bold 10px monospace';
   ctx.textAlign = 'right';
-  ctx.fillText(w.ammoLabel, SCREEN_W - 90, midY);
-
-  const ammoColor = ammo <= 0 ? (blink ? '#ff3030' : '#601010') : ammo > max * 0.4 ? '#22cc55' : ammo > max * 0.16 ? '#ccaa00' : '#cc2200';
-  ctx.fillStyle = ammoColor;
-  ctx.font = 'bold 18px monospace';
-  ctx.fillText(`${ammo}`, SCREEN_W - 40, midY + 1);
-  ctx.fillStyle = '#444';
-  ctx.font = '10px monospace';
-  ctx.fillText(`/${max}`, SCREEN_W - 16, midY + 4);
+  if (w.melee) {
+    ctx.fillStyle = '#666';
+    ctx.fillText(w.ammoLabel, SCREEN_W - 90, midY);
+    ctx.fillStyle = '#aaa';
+    ctx.font = 'bold 18px monospace';
+    ctx.fillText('∞', SCREEN_W - 40, midY + 1);
+  } else {
+    const ammo = game[w.ammo], max = game[w.max];
+    ctx.fillStyle = ammo <= 0 ? (blink ? '#ff3030' : '#601010') : '#666';
+    ctx.fillText(w.ammoLabel, SCREEN_W - 90, midY);
+    ctx.fillStyle = ammo <= 0 ? (blink ? '#ff3030' : '#601010') : ammo > max * 0.4 ? '#22cc55' : ammo > max * 0.16 ? '#ccaa00' : '#cc2200';
+    ctx.font = 'bold 18px monospace';
+    ctx.fillText(`${ammo}`, SCREEN_W - 40, midY + 1);
+    ctx.fillStyle = '#444';
+    ctx.font = '10px monospace';
+    ctx.fillText(`/${max}`, SCREEN_W - 16, midY + 4);
+  }
 
   // Kill counter (top right)
   ctx.fillStyle = 'rgba(0,0,0,0.6)';

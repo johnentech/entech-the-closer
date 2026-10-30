@@ -336,11 +336,23 @@ On a high-refresh gaming monitor (144–240 Hz) the game ran 2.4–4× too fast.
 
 ---
 
+### Mouse: melee fallback (Doom's fist) ✅
+A weak melee weapon of last resort: a gaming mouse swung by its cord. **Key 3**, always owned, no ammo.
+- **Stats** (constants next to the Closing Cannon's): `MELEE_DMG` 3 × 1–10 = **3–30** per hit (avg ~16), Doom's fist roll (1–10 × 2) scaled to this game, about 1/7 of a point-blank keyboard blast. Measured swings to kill: Router 2.4, Printer 7.5, Shadow IT 16.8. `MELEE_RANGE` 1.0 tile to the target's edge. `COOL_MS` 400 per swing. The hit lands `MELEE_HIT_MS` (110 ms) into the swing, via `weapon.meleeDue` → `meleeHit()` in `update()`.
+- **Like Doom's punch:** a single ray at the crosshair with a little aim wobble (`MELEE_SPREAD`). On a hit you turn to face the target, and every swing alerts nearby enemies (`alertEnemies`). A wall in reach gets a puff and a light knock; a miss is just the whoosh.
+- **Auto-switching:** `onEmpty()` now switches to the other gun if it has ammo, otherwise to the mouse ("KEYCAPS EMPTY — SWITCHING TO MOUSE"). Like Doom, picking up ammo for an empty gun while on the mouse switches straight to that gun (`rearm()` in the keycaps/closures pickups); a pickup when you still had ammo doesn't. **Q / mouse wheel** (`cycleWeapon`) now steps through `WEAPON_ORDER` (keyboard → cannon → mouse), skipping guns you don't own or that are empty.
+- `WEAPONS.mouse` has `melee: true`, `ammo: null`. `hasAmmo()` is always true for it, and `shoot()` branches before any ammo logic.
+- **HUD:** three narrower weapon slots (`WEAPON_ORDER`) showing `WEAPONS[].short` names. The mouse slot and the right-hand readout show "MELEE ∞".
+- **Sounds** (synthesized): `swing` whoosh, `punch` (thud plus a plastic crack), `mouse_wall`. Freedoom's `dspunch` could replace `punch` via `SFX_FILES` if it's downloaded.
+- **Art** (`drawMouse`): rasterized each frame straight into one ImageData (`mimg`). Reading canvas pixels back cost ~2 ms a frame; this is ~0.4–0.6 ms, the same as the keyboard. The gloved fist (`MOUSE_HAND`, 22×18) holds the cord. The mouse (`drawMouseBody`) is an egg-shaped dome with two buttons, a seam, a hue-cycling RGB scroll wheel and side strips; its front always points back along the cord. The cord is a quadratic curve that sags at rest and goes taut in the strike. The suit sleeve and cuff are filled polygons (`fillPoly`), then `outlineImg` adds the dark outline. `MOUSE_KEYS` are the swing keyframes (hand, mouse, scale, slack): hang → wind back → whip to the crosshair at the hit → follow through → hang, with motion ghosts during the strike and a pendulum sway at rest.
+
+---
+
 ## Remaining chunks
 
 ### Next session (user's list, 2026-10-29). Not started; discuss before coding
 1. ~~Make pickups more noticeable~~ and 2. ~~Redesign the Closing Cannon pickups~~: done (see "Bigger, hovering pickups" above).
-3. **Weak melee fallback weapon** for when the player has no ammo. To decide: what it is (gloved punch, stapler, coffee mug, mouse on a cord, …), its key (3?), damage and range, whether it auto-equips when both weapons are empty (`onEmpty` currently shows "NO AMMO"), and how it fits the HUD weapon slots.
+3. ~~Weak melee fallback weapon~~: done (see "Mouse: melee fallback" above).
 4. **Secret easter-egg room**, unlocked by the player doing something. To decide: where it is (a hidden wall that slides open like Doom's secrets, behind a poster, in the office or the IT Closet), what unlocks it (pressing E on a suspicious wall, shooting something, typing a code like a cheat, flushing DNS in a certain spot, …), and what's inside (credits for the team / voice actor, bonus supplies, an IT joke), plus a "SECRET FOUND" message and sound.
 5. **Monster closet before the boss** (added 2026-10-30). Flipping the main switch no longer unlocks the boss door. Instead it opens a monster closet (Doom-style ambush) holding a **second switch**, and that second switch is what unlocks the boss door. Once the closet's monsters are defeated, the closet also holds **enough ammo to fully stock the player** (keycaps and closures) for the boss fight. To decide: where the closet goes (near the server racks / boss door), which enemies and how many, whether the second switch works before every monster is dead, whether the ammo appears on the floor from the start or drops when the last monster dies, and the messages and voice lines (`switch`, `locked_core` and the "RESET THE MAIN SWITCH TO UNLOCK" prompt will need new wording).
 
