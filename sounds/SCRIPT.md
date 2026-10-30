@@ -60,7 +60,7 @@ Plays when you press a key on the title screen.
 ### Closing Cannon pickup ✅ *recorded*
 | File | Line |
 |---|---|
-| `cannon_1` | *(recorded: "WEAPON PICKUP")* |
+| `cannon_1` | "Now this is legendary!" |
 
 ### Flush DNS Cache pickup and use
 | File | Line |
@@ -99,7 +99,7 @@ Plays when the arena door seals behind you and the DNS appears. This is the big 
 
 | File | Line |
 |---|---|
-| `boss_intro_1` | *(recorded: "BOSS ENCOUNTER")* |
+| `boss_intro_1` | "You wanna get weird? I can get weird too." |
 
 ### Boss phase changes
 | File | Line |
@@ -134,8 +134,8 @@ Half of kills get a quip, picked by weight. Only one line plays at a time, so ki
 | File | Weight | Line |
 |---|---|---|
 | `kill_get_rekt` | 40% | "Get rekt!" |
-| `kill_haha` | 40% | *(recorded: "HAHA")* |
-| `kill_synez` | 20% | *(recorded: "SYNEZ")* |
+| `kill_haha` | 40% | "HAHA!!" |
+| `kill_synez` | 20% | "That guy needs Synez OS!" |
 
 ### Death ✅ *recorded*
 | File | Line |
@@ -147,7 +147,7 @@ Plays the moment the DNS dies (SERVFAIL).
 
 | File | Line |
 |---|---|
-| `victory_1` | *(recorded: "VICTORY")* |
+| `victory_1` | "That's why I'm the GOAT! The GOAT!!" |
 
 ---
 

@@ -465,14 +465,14 @@ const VOICE = {
   ammo:        { chance: 0.5,  cooldown: 9000,  priority: 1, lines: [['ammo_1', 'More keycaps. Nice and clicky.'], ['ammo_2', 'Fresh keycaps.'], ['ammo_3', 'Reloading the keyboard.']] },
   closures:    { chance: 0.6,  cooldown: 9000,  priority: 1, lines: [['closures_1', "Closures. Let's close some tickets."]] },
   health:      { chance: 0.6,  cooldown: 9000,  priority: 1, lines: [['health_1', 'Ahh, coffee. SLA restored.'], ['health_2', 'Caffeine. The real uptime.'], ['health_3', "That's the good stuff."]] },
-  cannon:      { chance: 1,    cooldown: 0,     priority: 3, lines: [['cannon_1', '']] },
+  cannon:      { chance: 1,    cooldown: 0,     priority: 3, lines: [['cannon_1', 'Now this is legendary!']] },
   flush_get:   { chance: 1,    cooldown: 0,     priority: 3, lines: [['flush_get_1', "Flush DNS cache. I'm gonna need that."]] },
   flush_use:   { chance: 1,    cooldown: 0,     priority: 4, lines: [['flush_use_1', 'Flush THIS.'], ['flush_use_2', 'ipconfig, slash, flush... D-N-S.']] },
   locked:      { chance: 1,    cooldown: 6000,  priority: 2, lines: [['locked_1', 'Access denied. Of course.'], ['locked_2', 'I need clearance. IT closet, probably.']] },
   locked_core: { chance: 1,    cooldown: 6000,  priority: 2, lines: [['locked_core_1', "Core's locked down. There's an override in here somewhere."]] },
   closet:      { chance: 1,    cooldown: 0,     priority: 3, lines: [['closet_1', "That is NOT in the asset inventory."]] },
   switch:      { chance: 1,    cooldown: 0,     priority: 3, lines: [['switch_1', 'Override engaged. Time to talk to the DNS.']] },
-  boss_intro:  { chance: 1,    cooldown: 0,     priority: 5, lines: [['boss_intro_1', '']] },
+  boss_intro:  { chance: 1,    cooldown: 0,     priority: 5, lines: [['boss_intro_1', 'You wanna get weird? I can get weird too.']] },
   boss_phase2: { chance: 1,    cooldown: 0,     priority: 4, lines: [['boss_phase2_1', 'Shadow IT? Who approved this?!']] },
   boss_phase3: { chance: 1,    cooldown: 0,     priority: 4, lines: [['boss_phase3_1', "TTL's hitting zero. Now or never."]] },
   // Every hit gets a line; it cuts off a kill quip or pickup line but never restarts itself mid-line
@@ -481,9 +481,9 @@ const VOICE = {
   empty:       { chance: 1,    cooldown: 5000,  priority: 2, lines: [['empty_1', 'Out of keycaps!'], ['empty_2', "Keyboard's empty!"]] },
   empty_cannon: { chance: 1,   cooldown: 5000,  priority: 2, lines: [['empty_cannon_1', 'Out of closures!']] },
   // Half of kills get a quip; one at a time, so a crowd dying at once doesn't stack lines
-  kill:        { chance: 0.5,  cooldown: 0,     priority: 1, lines: [['kill_get_rekt', 'Get rekt!', 0.4], ['kill_haha', '', 0.4], ['kill_synez', '', 0.2]] },
+  kill:        { chance: 0.5,  cooldown: 0,     priority: 1, lines: [['kill_get_rekt', 'Get rekt!', 0.4], ['kill_haha', 'HAHA!!', 0.4], ['kill_synez', 'That guy needs Synez OS!', 0.2]] },
   death:       { chance: 1,    cooldown: 0,     priority: 9, lines: [['death_1', '']] },
-  victory:     { chance: 1,    cooldown: 0,     priority: 9, lines: [['victory_1', '']] },
+  victory:     { chance: 1,    cooldown: 0,     priority: 9, lines: [['victory_1', "That's why I'm the GOAT! The GOAT!!"]] },
 };
 const voice = { el: null, priority: -1, last: {}, lastClip: null, sub: '', subUntil: 0 };
 

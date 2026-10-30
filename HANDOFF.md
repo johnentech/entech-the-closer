@@ -322,7 +322,7 @@ The voice actor's first 9 clips arrived already crunchy (8 kHz, 8-bit PCM WAV), 
 - **Kill quips don't stack:** the cooldown is 0, but a quip can't interrupt another line of the same priority, so a Flush purge or a crowd dying at once plays at most one.
 - **Hurt** is priority 2 with no cooldown. It cuts off kill quips and pickup lines (priority 1) but never restarts itself mid-line. Dropping to low health tries `low_health` first and falls back to a hurt line when `low_health` has nothing recorded.
 - `VOICE_EXTS` is now `['wav', 'mp3']`, since the recordings are WAV.
-- Subtitles: only "Get rekt!" has one. The other new clips have `''` because we don't have their exact wording yet. Fill them in in the `VOICE` table if wanted.
+- Subtitles (from the user's script, 2026-10-30): boss_intro_1 "You wanna get weird? I can get weird too.", cannon_1 "Now this is legendary!", kill_get_rekt "Get rekt!", kill_haha "HAHA!!", kill_synez "That guy needs Synez OS!", victory_1 "That's why I'm the GOAT! The GOAT!!". Hurt and death clips have none, on purpose.
 
 ---
 
