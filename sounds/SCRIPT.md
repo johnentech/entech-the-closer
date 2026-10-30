@@ -17,8 +17,8 @@ The wording below is a suggestion. Ad-libs are welcome. If a line changes, updat
 | **Takes** | Record 2–3 takes of each line. Pick the best one, and keep the others as variations |
 | **One file per line** | Name each file exactly as shown below |
 
-**Where files go:** `sounds/voice/` next to `index.html`, e.g. `sounds/voice/ammo_1.mp3`.
-The game tries `.mp3` first, then `.wav`. It skips missing files without errors, so lines can be added a few at a time. Refresh the page to pick up new files.
+**Where files go:** `sounds/voice/` next to `index.html`, e.g. `sounds/voice/ammo_1.wav`.
+The game tries `.wav` first, then `.mp3`. It skips missing files without errors, so lines can be added a few at a time. Refresh the page to pick up new files.
 
 > Until a file exists, the browser console shows a "404 (Not Found)" for it. That's expected and harmless.
 
@@ -57,10 +57,10 @@ Plays when you press a key on the title screen.
 | `health_2` | "Caffeine. The real uptime." |
 | `health_3` | "That's the good stuff." |
 
-### Closing Cannon pickup
+### Closing Cannon pickup ✅ *recorded*
 | File | Line |
 |---|---|
-| `cannon_1` | "Closing Cannon. Now we're resolving tickets." |
+| `cannon_1` | *(recorded: "WEAPON PICKUP")* |
 
 ### Flush DNS Cache pickup and use
 | File | Line |
@@ -87,12 +87,12 @@ Plays when you flip the switch inside the Server Room rack, which unlocks the bo
 |---|---|
 | `switch_1` | "Override engaged. Time to talk to the DNS." |
 
-### Boss encounter
+### Boss encounter ✅ *recorded*
 Plays when the arena door seals behind you and the DNS appears. This is the big one. Give it some weight.
 
 | File | Line |
 |---|---|
-| `boss_intro_1` | "Of course. It's always DNS." |
+| `boss_intro_1` | *(recorded: "BOSS ENCOUNTER")* |
 
 ### Boss phase changes
 | File | Line |
@@ -100,12 +100,13 @@ Plays when the arena door seals behind you and the DNS appears. This is the big 
 | `boss_phase2_1` | "Shadow IT? Who approved this?!" |
 | `boss_phase3_1` | "TTL's hitting zero. Now or never." |
 
-### Taking damage, 35% chance, at most every 1.5 s
-Short grunts and "oof"s, no words. These play often, so record **4 different ones** and keep them under half a second.
+### Taking damage, every hit ✅ *recorded*
+A line plays on every hit, 50/50 between the two. It can cut off a kill quip or pickup line, but never restarts itself mid-line.
 
 | File | Line |
 |---|---|
-| `hurt_1` … `hurt_4` | *(grunt / pained exhale / sharp "agh" / "oof")* |
+| `hurt_1` | *(recorded: "DAMAGE")* |
+| `hurt_2` | *(recorded: "DAMAGE 2")* |
 
 ### Low health (SLA drops to 25% or below), at most every 20 s
 | File | Line |
@@ -120,27 +121,26 @@ Short grunts and "oof"s, no words. These play often, so record **4 different one
 | `empty_2` | "Keyboard's empty!" *(keyboard)* |
 | `empty_cannon_1` | "Out of closures!" *(Closing Cannon)* |
 
-### Enemy killed, 15% chance, at most every 10 s (optional)
+### Enemy killed, 50% chance ✅ *recorded*
+Half of kills get a quip, picked by weight. Only one line plays at a time, so killing a crowd at once doesn't stack them.
+
+| File | Weight | Line |
+|---|---|---|
+| `kill_get_rekt` | 40% | "Get rekt!" |
+| `kill_haha` | 40% | *(recorded: "HAHA")* |
+| `kill_synez` | 20% | *(recorded: "SYNEZ")* |
+
+### Death ✅ *recorded*
 | File | Line |
 |---|---|
-| `kill_1` | "Ticket closed." |
-| `kill_2` | "Resolved." |
-| `kill_3` | "Marked as duplicate." |
+| `death_1` | *(recorded: "DEATH")* |
 
-### Death
-A death cry or groan, no words needed, about 1–2 s.
+### Victory ✅ *recorded*
+Plays the moment the DNS dies (SERVFAIL).
 
 | File | Line |
 |---|---|
-| `death_1` | *(death cry)* |
-| `death_2` | *(defeated groan, fading out)* |
-
-### Victory
-Plays when "CONNECTION ESTABLISHED." appears after the boss dies.
-
-| File | Line |
-|---|---|
-| `victory_1` | "Resolved. It was DNS. ...It's always DNS." |
+| `victory_1` | *(recorded: "VICTORY")* |
 
 ---
 
@@ -151,4 +151,4 @@ To add another take, put the file in `sounds/voice/` (e.g. `ammo_4.mp3`). Then a
 ammo: { chance: 0.5, cooldown: 9000, priority: 1, lines: [['ammo_1', 'More keycaps. Nice and clicky.'], /* … */ ['ammo_4', 'Your new subtitle.']] },
 ```
 
-Leave the subtitle as `''` for lines without words (grunts). In the same table you can tune `chance`, `cooldown` (ms) and `priority`; a higher-priority line interrupts a lower one.
+Leave the subtitle as `''` for lines without words (grunts). An optional third value is a weight (see `kill`): weighted variants are picked by weight instead of evenly. In the same table you can tune `chance`, `cooldown` (ms) and `priority`; a higher-priority line interrupts a lower one.

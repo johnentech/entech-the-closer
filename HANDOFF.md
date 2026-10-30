@@ -306,6 +306,26 @@ Both first-person weapons were redrawn (`// --- First-person weapons: chunky pix
 
 ---
 
+### First voice clips ✅
+The voice actor's first 9 clips arrived already crunchy (8 kHz, 8-bit PCM WAV), so no ffmpeg processing was needed. They were renamed into `sounds/voice/`. SYNEZ was stereo and was downmixed to mono with a small node script.
+
+| Recording | File | Event / when it plays |
+|---|---|---|
+| GET REKT / HAHA / SYNEZ | `kill_get_rekt`, `kill_haha`, `kill_synez` | `kill`: 50% of kills get a quip, weighted 40 / 40 / 20 |
+| DAMAGE / DAMAGE 2 | `hurt_1`, `hurt_2` | `hurt`: every hit, 50/50 |
+| BOSS ENCOUNTER | `boss_intro_1` | `boss_intro`: 700 ms after the DNS spawns |
+| VICTORY | `victory_1` | `victory`: now fires in `bossDie()` (the moment it dies), no longer at the banner |
+| DEATH | `death_1` | `death` |
+| WEAPON PICKUP | `cannon_1` | `cannon`: picking up the Closing Cannon |
+
+- **Weighted variants:** a `VOICE` line can take a third value, a weight (`['kill_haha', '', 0.4]`). `say()` picks weighted variants by weight (repeats allowed); unweighted events still pick evenly and never repeat back to back. Verified over 4000 trials: kill plays ~48%, split ~40/40/20; hurt 100%, ~50/50.
+- **Kill quips don't stack:** the cooldown is 0, but a quip can't interrupt another line of the same priority, so a Flush purge or a crowd dying at once plays at most one.
+- **Hurt** is priority 2 with no cooldown. It cuts off kill quips and pickup lines (priority 1) but never restarts itself mid-line. Dropping to low health tries `low_health` first and falls back to a hurt line when `low_health` has nothing recorded.
+- `VOICE_EXTS` is now `['wav', 'mp3']`, since the recordings are WAV.
+- Subtitles: only "Get rekt!" has one. The other new clips have `''` because we don't have their exact wording yet. Fill them in in the `VOICE` table if wanted.
+
+---
+
 ## Remaining chunks
 
 ### Next session (user's list, 2026-10-29). Not started; discuss before coding
@@ -313,7 +333,7 @@ Both first-person weapons were redrawn (`// --- First-person weapons: chunky pix
 3. **Weak melee fallback weapon** for when the player has no ammo. To decide: what it is (gloved punch, stapler, coffee mug, mouse on a cord, …), its key (3?), damage and range, whether it auto-equips when both weapons are empty (`onEmpty` currently shows "NO AMMO"), and how it fits the HUD weapon slots.
 4. **Secret easter-egg room**, unlocked by the player doing something. To decide: where it is (a hidden wall that slides open like Doom's secrets, behind a poster, in the office or the IT Closet), what unlocks it (pressing E on a suspicious wall, shooting something, typing a code like a cheat, flushing DNS in a certain spot, …), and what's inside (credits for the team / voice actor, bonus supplies, an IT joke), plus a "SECRET FOUND" message and sound.
 
-Still open from before: process the voice actor's clips (ffmpeg pipeline or Audacity; written OK received).
+Voice clips: the first 9 are in (see above). The other events in `VOICE` still have no recordings.
 
 ---
 

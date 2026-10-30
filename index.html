@@ -399,35 +399,38 @@ function sfx(name, x, y) {
   src.start(t);
 }
 
-// Voice lines (the player character). Each event lists [file, subtitle] variants, loaded from
-// sounds/voice/<file>.mp3 (or .wav). Missing files are skipped silently, so lines can be recorded a few at a time.
+// Voice lines (the player character). Each event lists [file, subtitle, weight?] variants, loaded from
+// sounds/voice/<file>.wav (or .mp3). Missing files are skipped silently, so lines can be recorded a few at a time.
+//   weight   — optional: variants with weights are picked by weight (and may repeat); otherwise evenly, never twice in a row
 //   chance   — how often the line plays when its event fires
 //   cooldown — minimum ms between two lines of this event
 //   priority — a higher-priority line interrupts a lower one; equal or lower waits its turn (is dropped)
 const VOICE_DIR  = 'sounds/voice/';
-const VOICE_EXTS = ['mp3', 'wav'];
+const VOICE_EXTS = ['wav', 'mp3'];
 const SUBTITLES  = true;
 const VOICE = {
   start:       { chance: 1,    cooldown: 0,     priority: 2, lines: [['start_1', "Another Monday. Let's see what's broken."], ['start_2', 'Okay. Who touched the DNS?']] },
   ammo:        { chance: 0.5,  cooldown: 9000,  priority: 1, lines: [['ammo_1', 'More keycaps. Nice and clicky.'], ['ammo_2', 'Fresh keycaps.'], ['ammo_3', 'Reloading the keyboard.']] },
   closures:    { chance: 0.6,  cooldown: 9000,  priority: 1, lines: [['closures_1', "Closures. Let's close some tickets."]] },
   health:      { chance: 0.6,  cooldown: 9000,  priority: 1, lines: [['health_1', 'Ahh, coffee. SLA restored.'], ['health_2', 'Caffeine. The real uptime.'], ['health_3', "That's the good stuff."]] },
-  cannon:      { chance: 1,    cooldown: 0,     priority: 3, lines: [['cannon_1', "Closing Cannon. Now we're resolving tickets."]] },
+  cannon:      { chance: 1,    cooldown: 0,     priority: 3, lines: [['cannon_1', '']] },
   flush_get:   { chance: 1,    cooldown: 0,     priority: 3, lines: [['flush_get_1', "Flush DNS cache. I'm gonna need that."]] },
   flush_use:   { chance: 1,    cooldown: 0,     priority: 4, lines: [['flush_use_1', 'Flush THIS.'], ['flush_use_2', 'ipconfig, slash, flush... D-N-S.']] },
   locked:      { chance: 1,    cooldown: 6000,  priority: 2, lines: [['locked_1', 'Access denied. Of course.'], ['locked_2', 'I need clearance. IT closet, probably.']] },
   locked_core: { chance: 1,    cooldown: 6000,  priority: 2, lines: [['locked_core_1', "Core's locked down. There's an override in here somewhere."]] },
   switch:      { chance: 1,    cooldown: 0,     priority: 3, lines: [['switch_1', 'Override engaged. Time to talk to the DNS.']] },
-  boss_intro:  { chance: 1,    cooldown: 0,     priority: 5, lines: [['boss_intro_1', "Of course. It's always DNS."]] },
+  boss_intro:  { chance: 1,    cooldown: 0,     priority: 5, lines: [['boss_intro_1', '']] },
   boss_phase2: { chance: 1,    cooldown: 0,     priority: 4, lines: [['boss_phase2_1', 'Shadow IT? Who approved this?!']] },
   boss_phase3: { chance: 1,    cooldown: 0,     priority: 4, lines: [['boss_phase3_1', "TTL's hitting zero. Now or never."]] },
-  hurt:        { chance: 0.35, cooldown: 1500,  priority: 0, lines: [['hurt_1', ''], ['hurt_2', ''], ['hurt_3', ''], ['hurt_4', '']] },
+  // Every hit gets a line; it cuts off a kill quip or pickup line but never restarts itself mid-line
+  hurt:        { chance: 1,    cooldown: 0,     priority: 2, lines: [['hurt_1', '', 0.5], ['hurt_2', '', 0.5]] },
   low_health:  { chance: 1,    cooldown: 20000, priority: 3, lines: [['low_health_1', 'I need coffee. Now.'], ['low_health_2', "SLA's about to breach..."]] },
   empty:       { chance: 1,    cooldown: 5000,  priority: 2, lines: [['empty_1', 'Out of keycaps!'], ['empty_2', "Keyboard's empty!"]] },
   empty_cannon: { chance: 1,   cooldown: 5000,  priority: 2, lines: [['empty_cannon_1', 'Out of closures!']] },
-  kill:        { chance: 0.15, cooldown: 10000, priority: 1, lines: [['kill_1', 'Ticket closed.'], ['kill_2', 'Resolved.'], ['kill_3', 'Marked as duplicate.']] },
-  death:       { chance: 1,    cooldown: 0,     priority: 9, lines: [['death_1', ''], ['death_2', '']] },
-  victory:     { chance: 1,    cooldown: 0,     priority: 9, lines: [['victory_1', "Resolved. It was DNS. ...It's always DNS."]] },
+  // Half of kills get a quip; one at a time, so a crowd dying at once doesn't stack lines
+  kill:        { chance: 0.5,  cooldown: 0,     priority: 1, lines: [['kill_get_rekt', 'Get rekt!', 0.4], ['kill_haha', '', 0.4], ['kill_synez', '', 0.2]] },
+  death:       { chance: 1,    cooldown: 0,     priority: 9, lines: [['death_1', '']] },
+  victory:     { chance: 1,    cooldown: 0,     priority: 9, lines: [['victory_1', '']] },
 };
 const voice = { el: null, priority: -1, last: {}, lastClip: null, sub: '', subUntil: 0 };
 
@@ -440,7 +443,7 @@ function loadClip(clip, exts) {
   el.src = VOICE_DIR + clip.file + '.' + exts[0];
 }
 for (const ev of Object.values(VOICE)) {
-  ev.clips = ev.lines.map(([file, text]) => ({ file, text, el: null }));
+  ev.clips = ev.lines.map(([file, text, weight]) => ({ file, text, weight, el: null }));
   ev.clips.forEach(clip => loadClip(clip, VOICE_EXTS));
 }
 
@@ -462,9 +465,15 @@ function say(event) {
   if (busy && ev.priority <= voice.priority) return false;
   const ready = ev.clips.filter(c => c.el);
   if (!ready.length || Math.random() > ev.chance) return false;
-  // Don't repeat the previous variant back to back
-  const pool = ready.length > 1 ? ready.filter(c => c !== voice.lastClip) : ready;
-  const clip = pool[Math.random() * pool.length | 0];
+  let clip;
+  if (ready[0].weight) {
+    let r = Math.random() * ready.reduce((sum, c) => sum + c.weight, 0);
+    clip = ready.find(c => (r -= c.weight) < 0) || ready[ready.length - 1];
+  } else {
+    // Don't repeat the previous variant back to back
+    const pool = ready.length > 1 ? ready.filter(c => c !== voice.lastClip) : ready;
+    clip = pool[Math.random() * pool.length | 0];
+  }
   if (busy) voice.el.pause();
   voice.last[event] = now;
   voice.lastClip = clip;
@@ -1310,8 +1319,7 @@ function hurtPlayer(dmg, srcX, srcY, cause) {
     return;
   }
   sfx('hurt');
-  if (before > LOW_HEALTH && game.health <= LOW_HEALTH) say('low_health');
-  else say('hurt');
+  if (!(before > LOW_HEALTH && game.health <= LOW_HEALTH && say('low_health'))) say('hurt');
 }
 
 function showMessage(text, ms = 2200) {
@@ -1567,6 +1575,7 @@ function bossDie(e, now) {
   game.kills++;
   game.endAt = now;
   sfx('servfail');
+  say('victory');
   game.msgUntil = 0; // SERVFAIL gets the whole screen (drawServfail)
   // Its adds and queries die with it
   for (const a of enemies) if (a.bossAdd && a.state !== 'dead') { a.state = 'dead'; game.kills++; }
@@ -2191,7 +2200,7 @@ function update() {
   if (game.won) {
     const typed = victoryTyped(t0 - game.wonAt);
     if (typed > game.typed) { game.typed = typed; sfx('type'); }
-    if (!game.bannerShown && t0 - game.wonAt >= VICTORY_BANNER_AT) { game.bannerShown = true; sfx('victory'); say('victory'); }
+    if (!game.bannerShown && t0 - game.wonAt >= VICTORY_BANNER_AT) { game.bannerShown = true; sfx('victory'); }
     return;
   }
   if (game.health <= LOW_HEALTH && t0 >= audio.upsAt) { sfx('ups'); audio.upsAt = t0 + 1400; }
