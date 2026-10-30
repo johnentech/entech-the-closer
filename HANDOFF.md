@@ -326,6 +326,16 @@ The voice actor's first 9 clips arrived already crunchy (8 kHz, 8-bit PCM WAV), 
 
 ---
 
+### Fixed 60 Hz game speed ✅
+On a high-refresh gaming monitor (144–240 Hz) the game ran 2.4–4× too fast. Movement, turning, enemy walking, projectiles and screen fades all advanced a fixed amount per **frame**, while attack and cooldown timers used the clock.
+- `loop(now)` now runs `update()` at a fixed **60 steps a second** (`STEP_MS`) using an accumulator, and runs `render()` every display frame. All existing per-frame speeds keep their 60 Hz tuning.
+- A step may start up to 10% early, so 60 Hz screens get exactly one step per frame despite timing jitter (no 0/2-step stutter).
+- At most `MAX_STEPS` (5) catch-up steps run per frame. After a long stall (hidden tab), the clock skips ahead instead of fast-forwarding.
+- Verified by driving `loop()` with synthetic timestamps: 30, 60 (±1.5 ms jitter), 59.94, 75, 120, 144, 165 and 240 Hz all give 60.0 updates/s. A real 144 Hz run turned exactly `ROT_SPEED × 60` in one second.
+- On a 144 Hz+ monitor, motion updates at 60 Hz (like classic Doom's fixed 35 Hz tic). If smoother motion is ever wanted, the next step is interpolating the camera between steps.
+
+---
+
 ## Remaining chunks
 
 ### Next session (user's list, 2026-10-29). Not started; discuss before coding

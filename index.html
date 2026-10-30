@@ -3705,14 +3705,22 @@ function drawDeathOverlay() {
 }
 
 // --- Loop ---
-function loop() {
-  update();
+// The game runs at a fixed 60 updates a second whatever the monitor's refresh rate (speeds are tuned
+// per 60 Hz step), and draws every display frame. A step may start up to 10% early, which absorbs
+// frame-timing jitter on 60 Hz screens so they don't stutter between 0 and 2 steps a frame.
+const STEP_MS   = 1000 / 60;
+const MAX_STEPS = 5;           // catch-up cap per frame on slow machines
+let simTime = performance.now();
+function loop(now) {
+  let steps = 0;
+  while (now - simTime >= STEP_MS * 0.9 && steps < MAX_STEPS) { update(); simTime += STEP_MS; steps++; }
+  if (now - simTime > STEP_MS * MAX_STEPS) simTime = now; // far behind (tab was hidden): skip ahead, don't fast-forward
   render();
   requestAnimationFrame(loop);
 }
 // R from the death/victory screen reloads straight into the game
 try { if (sessionStorage.getItem('dnsSkipTitle')) { sessionStorage.removeItem('dnsSkipTitle'); startGame(true); } } catch (e) {}
-loop();
+requestAnimationFrame(loop);
 </script>
 </body>
 </html>
