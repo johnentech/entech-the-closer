@@ -360,6 +360,16 @@ Flipping the main switch no longer unlocks the boss door. It springs a Doom-styl
 
 ---
 
+### Main switch moved to a free-standing post ✅
+Play-test: flipping the old main switch (on the east face of a C-shaped rack, facing west) left the closet wall off-screen, so players missed the walls dropping. Any one-tile wall switch fills most of the screen at arm's length, so it's no longer a wall cell:
+- **`M` in the map** (`MAIN_SWITCH`, at (10.5, 20.5) in the open Server Room, ~3.5 tiles south of the closet wall). The C-shaped rack that surrounded the old `X` switch is gone, and `X` / wall type 8 are removed from `WALL_CHARS`, `WALL_TEX`, the minimap colors and the render loop. `SWITCH` (8) remains only as the use-prompt type.
+- **A billboard sprite** (`TEX.console`, 16×44, `CONSOLE_SCALE` 0.85): a breaker box at eye level on a thin pole, so the lever sits above the held weapon and the closet wall shows on both sides. A waist-high cabinet was tried first and was completely hidden behind the gun. Front (hazard stripe, MAIN label, blinking red light, yellow lever up → green lever down) when you're south of it; vented back when you're north of it.
+- **Use:** `consoleAhead()`, only from its **south side** (`player.y > post.y + 0.25`), within `CONSOLE_REACH` (1.7) and facing it (dot > 0.85). You're always looking north at the closet wall when you pull it. `doorAhead()` checks it first.
+- **Solid:** `isWall()` blocks a `CONSOLE_R` (0.2) square at its center. Cell corners stay open, so the flow-field pathing ignores it. Rockets hit it.
+- Minimap: an orange dot that turns green once pulled. The locked boss-door message now says "FIND THE MAIN SWITCH IN THE SERVER ROOM".
+
+---
+
 ## Remaining chunks
 
 ### Next session (user's list, 2026-10-29). Not started; discuss before coding
