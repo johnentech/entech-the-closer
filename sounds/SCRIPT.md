@@ -81,7 +81,7 @@ Plays when you press a key on the title screen.
 | `locked_core_1` | "Core's locked down. There's an override in here somewhere." |
 
 ### Main switch flipped: the monster closet opens
-Plays when you pull the main switch post in the Server Room and the wall in front of you sinks, revealing a closet full of Printers and Routers. Surprised, a bit offended.
+Plays when you flip the main switch on the Server Room's north wall and the wall around it sinks, revealing a closet full of Printers and Routers. Surprised, a bit offended.
 
 | File | Line |
 |---|---|

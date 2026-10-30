@@ -29,13 +29,13 @@ const COLLIDE    = 0.22; // collision margin
 // --- Level ---
 // Office (top left) → hallways → IT Closet (top right) → Server Room (bottom left) → Boss Door → Arena (bottom right)
 // The Server Room's security doors stay locked until the Closing Cannon is picked up in the IT Closet.
-// The main switch (M, a free-standing console in the Server Room, pulled from its south side so you face the closet)
-// drops the Server Room's north wall (L) like a Doom monster closet; the core breaker (Y) on the closet's back wall
-// unlocks the boss door.
+// The main switch (X, in the middle of the Server Room's north wall) drops the wall on both sides of it (L) like a Doom
+// monster closet; the core breaker (Y) on the closet's back wall unlocks the boss door. Walls facing into the closet
+// show server racks.
 // Walls:    # concrete   = cubicle divider   S server rack   D boss door   K security door   % IT closet shelving   @ arena wall
-//           Y core breaker (concrete, panel on its south face)
+//           X main switch   Y core breaker (both concrete, panel on the south face)
 //           L monster-closet wall (looks like concrete; sinks into the floor when the main switch is flipped)
-// Entities: M main switch console   P player start   p Printer   r Rogue Router   t keycaps (keyboard ammo)   c coffee
+// Entities: P player start   p Printer   r Rogue Router   t keycaps (keyboard ammo)   c coffee
 //           C Closing Cannon   o closures (cannon ammo)   F Flush DNS Cache   B DNS boss spawn
 const LEVEL = [
   '########################################',
@@ -54,11 +54,11 @@ const LEVEL = [
   '##########Y###########..#@.............@',
   '#####tto.....oot######..#@..@@.....@@..@',
   '#####tp.r.p.r.po######..#@..@@.....@@..@',
-  '#####LLLLLLLLLLL######K##@.............@',
+  '#####LLLLLXLLLLL######K##@.............@',
   '#........................@.............@',
   '#..SSS.........SSS.......@.............@',
   '#..S.S......p..S.S...r...@.............@',
-  '#..SSS....M....SSS.......@......B......@',
+  '#..SSS.........SSS.......@......B......@',
   '#....r...................@.............@',
   '#..........t.............Dc............@',
   '#..SSS...SSS...SSS...c...@o............@',
@@ -69,10 +69,10 @@ const LEVEL = [
   '#F..........c............@c..........tF@',
   '#########################@@@@@@@@@@@@@@@',
 ];
-const WALL_CHARS = { '#': 1, '=': 2, 'S': 3, 'D': 4, '%': 5, '@': 6, 'K': 7, 'Y': 9, 'L': 10 };
+const WALL_CHARS = { '#': 1, '=': 2, 'S': 3, 'D': 4, '%': 5, '@': 6, 'K': 7, 'X': 8, 'Y': 9, 'L': 10 };
 const DOOR          = 4;  // boss door
 const SECURITY_DOOR = 7;  // server room doors, unlocked by the Closing Cannon
-const SWITCH        = 8;  // main switch console (not a wall; this is its use-prompt type), opens the monster closet
+const SWITCH        = 8;  // main switch, opens the monster closet around it
 const BREAKER       = 9;  // core breaker in the closet, unlocks the boss door
 const CLOSET_WALL   = 10; // lowers when the main switch is flipped
 const DOOR_TYPES    = [DOOR, SECURITY_DOOR];
@@ -83,7 +83,6 @@ const LEVEL_SPAWNS = []; // { ch, x, y } — processed once enemies/pickups exis
 let PLAYER_START = { x: 1.5, y: 1.5 };
 let BOSS_DOOR    = null;
 let BOSS_SPAWN   = null;
-let MAIN_SWITCH  = null; // center of the main switch console
 LEVEL.forEach((row, y) => {
   MAP.push([...row].map((ch, x) => {
     if (WALL_CHARS[ch]) {
@@ -92,7 +91,6 @@ LEVEL.forEach((row, y) => {
     }
     if (ch === 'P')      PLAYER_START = { x: x + 0.5, y: y + 0.5 };
     else if (ch === 'B') BOSS_SPAWN   = { x: x + 0.5, y: y + 0.5 };
-    else if (ch === 'M') MAIN_SWITCH  = { x: x + 0.5, y: y + 0.5 };
     else if (ch !== '.') LEVEL_SPAWNS.push({ ch, x: x + 0.5, y: y + 0.5 });
     return 0;
   }));
@@ -101,7 +99,7 @@ const MAP_W = MAP[0].length;
 const MAP_H = MAP.length;
 
 // Walls are textured (WALL_TEX, see "Map textures"); the minimap uses flat colors
-const MINIMAP_COLORS = { 1: '#999', 2: '#a08050', 3: '#4a6a9a', 4: '#e33', 5: '#7a8060', 6: '#7a4aa0', 7: '#e0b020', 9: '#ff9020', 10: '#999' };
+const MINIMAP_COLORS = { 1: '#999', 2: '#a08050', 3: '#4a6a9a', 4: '#e33', 5: '#7a8060', 6: '#7a4aa0', 7: '#e0b020', 8: '#ff9020', 9: '#ff9020', 10: '#999' };
 
 // Monster closet: the floor cells behind the closet wall (flood fill north from it), so their monsters can be woken
 // and the floor matched to the Server Room
@@ -1194,37 +1192,6 @@ const TEX = {
 };
 TEX.dns.pain = tintTex(TEX.dns.idle0, '#ffffff', 0.5);
 
-// Main switch post (16×44, most of a wall tall): a breaker box at eye level on a thin pole, so it stays above the
-// held weapon and you see the closet wall on both sides of it. Front (seen from the south): hazard stripe, MAIN label,
-// status light and lever (up/yellow = off, down/green = on). Back: vents. Variants: offBright / offDim (the light
-// blinks), on, back.
-function consoleTex(face, on, lit) {
-  return outlineTex(makeTex(16, 44, (g, R) => {
-    R('#2a2b2e', 3, 40, 10, 4); R('#4a4e55', 3, 40, 10, 1);                   // base plate
-    R('#3e434a', 6, 18, 4, 22); R('#6a7078', 6, 18, 1, 22);                   // pole, lit edge
-    R('#24272c', 9, 18, 1, 22);
-    R('#5a6068', 0, 0, 16, 18);                                               // breaker box
-    R('#3e434a', 0, 0, 1, 18); R('#3e434a', 15, 0, 1, 18); R('#8a9098', 0, 0, 16, 1);
-    R('#2e3238', 0, 17, 16, 1);
-    for (let y = 1; y < 3; y++) for (let x = 1; x < 15; x++) R(((x + y) >> 1) % 2 ? '#e0b020' : '#151515', x, y, 1, 1); // hazard stripe
-    if (face === 'back') {
-      for (const y of [5, 8, 11, 14]) { R('#25282d', 3, y, 10, 1); R('#767c84', 3, y + 1, 10, 1); } // vents
-      return;
-    }
-    R('#d6d6d2', 2, 4, 9, 2);                                                 // MAIN label plate
-    for (const x of [3, 5, 6, 8, 9]) R('#2a2a2a', x, 4, 1, 1);
-    R(on ? '#30ff60' : lit ? '#ff3030' : '#601010', 12, 4, 2, 2);             // status light
-    R('#1a1a1a', 7, 7, 2, 9);                                                 // lever slot
-    const hy = on ? 13 : 7;                                                   // lever handle
-    R(on ? '#30c050' : '#e0b020', 3, hy, 10, 3);
-    R(on ? '#80ff9a' : '#fff0a0', 3, hy, 10, 1);
-    R(on ? '#1a6a2a' : '#8a6a10', 3, hy + 2, 10, 1);
-  }));
-}
-TEX.console = { offBright: consoleTex('front', false, true), offDim: consoleTex('front', false, false),
-                on: consoleTex('front', true), back: consoleTex('back') };
-const CONSOLE_SCALE = 0.85;
-
 // --- Enemies ---
 // speed in tiles/frame; ranges in tiles; scale = sprite height as fraction of wall height
 const ENEMY_TYPES = {
@@ -1793,24 +1760,18 @@ function updatePickups() {
 }
 
 // --- Doors ---
-// The main switch post: usable from its south side (lever face), close and facing it, so you're looking
-// straight at the closet wall when you pull it
-const CONSOLE_R = 0.2, CONSOLE_REACH = 1.7;
-function consoleAhead() {
-  const dx = MAIN_SWITCH.x - player.x, dy = MAIN_SWITCH.y - player.y, d = Math.hypot(dx, dy);
-  if (d > CONSOLE_REACH || player.y < MAIN_SWITCH.y + 0.25) return false;
-  return (dx * player.dirX + dy * player.dirY) / d > 0.85;
-}
-
-// Returns the door, switch or console the player is facing within reach ({x, y, type}), or null
+// Returns the door or switch the player is facing within reach ({x, y, type}), or null. Doors and the core breaker
+// reach 1.8 tiles; the main switch reaches further (SWITCH_REACH), so you can pull it from far enough back to see
+// the closet wall sink on both sides of it. Both switch panels are on the south face.
+const USE_REACH = 1.8, SWITCH_REACH = 2.6;
 function doorAhead() {
-  if (consoleAhead()) return { x: Math.floor(MAIN_SWITCH.x), y: Math.floor(MAIN_SWITCH.y), type: SWITCH };
-  for (const d of [0.6, 1.0, 1.4, 1.8]) {
+  for (const d of [0.6, 1.0, 1.4, 1.8, 2.2, 2.6]) {
     const cx = Math.floor(player.x + player.dirX * d);
     const cy = Math.floor(player.y + player.dirY * d);
     if (!isWall(cx, cy)) continue;
     const type = MAP[cy] && MAP[cy][cx];
-    if (type === BREAKER) return player.y > cy + 1 ? { x: cx, y: cy, type } : null; // the panel is on the south face
+    if (d > (type === SWITCH ? SWITCH_REACH : USE_REACH)) return null;
+    if (type === SWITCH || type === BREAKER) return player.y > cy + 1 ? { x: cx, y: cy, type } : null;
     return DOOR_TYPES.includes(type) ? { x: cx, y: cy, type } : null;
   }
   return null;
@@ -2305,9 +2266,7 @@ function pelletDamage(dist) {
 function isWall(x, y) {
   const mx = Math.floor(x), my = Math.floor(y);
   if (mx < 0 || mx >= MAP_W || my < 0 || my >= MAP_H) return true;
-  if (MAP[my][mx] > 0) return true;
-  // The main switch console blocks a small square in the middle of its cell (cell corners stay open for pathing)
-  return Math.abs(x - MAIN_SWITCH.x) < CONSOLE_R && Math.abs(y - MAIN_SWITCH.y) < CONSOLE_R;
+  return MAP[my][mx] > 0;
 }
 
 // DDA march from (ox,oy) along (dx,dy). Returns distance in ray-parameter units:
@@ -2601,6 +2560,7 @@ const WALL_TEX = {
   5: [faces(MAP_TEX.shelving)],
   6: [faces(MAP_TEX.arena)],
   7: [faces(MAP_TEX.secDoor)],
+  8: [faces(MAP_TEX.concrete)],  // main switch (panel drawn on top)
   9: [faces(MAP_TEX.concrete)],  // core breaker (panel drawn on top)
   10: [faces(MAP_TEX.concrete)], // monster-closet wall: plain concrete, no tell
 };
@@ -2782,9 +2742,10 @@ function render() {
   const lift = closetHeight(), lowering = lift > 0 && lift < 1;
   for (let x = 0; x < SCREEN_W; x++) {
     const camX = 2 * x / SCREEN_W - 1;
-    const dist = castRay(player.x, player.y,
-                         player.dirX + player.planeX * camX,
-                         player.dirY + player.planeY * camX, lowering);
+    const rdx = player.dirX + player.planeX * camX, rdy = player.dirY + player.planeY * camX;
+    const dist = castRay(player.x, player.y, rdx, rdy, lowering);
+    // Faces looking into the monster closet (the cell in front of the hit face is closet floor) are server racks
+    const inCloset = CLOSET[raySide === 0 ? rayMapY * MAP_W + rayMapX - Math.sign(rdx) : (rayMapY - Math.sign(rdy)) * MAP_W + rayMapX];
     zBuf[x] = dist;
     liftZ[x] = Infinity;
     const lDist = liftDist, lSide = liftSide, lWallX = liftWallX;
@@ -2794,13 +2755,13 @@ function render() {
     const y1 = Math.min(SCREEN_H - 1, HALF_H + lineH / 2 | 0);
 
     // One texture column, stretched to the wall height; side 1 (NS faces) uses the darker copy
-    const frames = WALL_TEX[rayHit] || WALL_TEX[1];
+    const frames = inCloset ? RACK_FRAMES : WALL_TEX[rayHit] || WALL_TEX[1];
     const tex = frames[(blink + rayMapX * 7 + rayMapY * 13) % frames.length][raySide];
     ctx.drawImage(tex, rayWallX * TEX_SIZE | 0, 0, 1, TEX_SIZE, x, HALF_H - lineH / 2, 1, lineH);
     ctx.fillStyle = FOG_STYLES[Math.min(FOG_STEPS, dist * FOG_RATE / FOG_MAX * FOG_STEPS | 0)];
     ctx.fillRect(x, y0, 1, y1 - y0 + 1);
     if (DOOR_TYPES.includes(rayHit)) drawDoorColumn(x, y0, y1, lineH, rayHit);
-    else if (rayHit === BREAKER && raySide === 1 && player.dirY + player.planeY * camX < 0) drawSwitchColumn(x, lineH, game.breakerOn);
+    else if ((rayHit === SWITCH || rayHit === BREAKER) && raySide === 1 && rdy < 0) drawSwitchColumn(x, lineH, rayHit === SWITCH ? game.switchOn : game.breakerOn);
 
     // A closet wall sinking into the floor: the top part of its texture, standing up from the floor line
     if (lDist < dist) {
@@ -3035,7 +2996,7 @@ function drawDoorColumn(x, y0, y1, lineH, type) {
   }
 }
 
-// Core breaker panel on a wall: a steel panel with a status light and a lever (up = off/red, down = on/green)
+// Switch panel (main switch, core breaker) on a wall's south face: a steel panel with a status light and a lever (up = off/red, down = on/green)
 function drawSwitchColumn(x, lineH, on) {
   const u = rayWallX;
   if (u < 0.28 || u > 0.72) return;
@@ -3088,10 +3049,6 @@ function drawSprites() {
     list.push({ x: p.x, y: p.y, tex: TEX.pageGlow, scale: gs, z: PAGE_Z + (PAGE_SCALE - gs) / 2, alpha: pulse, blend: 'lighter' });
     list.push({ x: p.x, y: p.y, tex: TEX.testPage[(now / PAGE_FLIP_MS + p.spin | 0) % TEX.testPage.length], scale: PAGE_SCALE, z: PAGE_Z });
   }
-  // Main switch console: lever face from the south, back from the north; the light blinks until it's pulled
-  const C = TEX.console, front = player.y > MAIN_SWITCH.y;
-  list.push({ x: MAIN_SWITCH.x, y: MAIN_SWITCH.y, scale: CONSOLE_SCALE, z: 0,
-              tex: !front ? C.back : game.switchOn ? C.on : (now / 400 | 0) % 2 ? C.offBright : C.offDim });
   // Pickups hover gently (~2 s bob), each out of step with the others
   for (const k of pickups) list.push({ x: k.x, y: k.y, tex: PICKUPS[k.kind].tex, scale: PICKUPS[k.kind].scale,
                                      z: 0.05 + 0.035 * (0.5 + 0.5 * Math.sin(now * 0.0032 + k.x * 1.7 + k.y * 2.3)) });
@@ -3977,12 +3934,10 @@ function drawMinimap() {
   ctx.globalAlpha = 0.65;
   for (let r = 0; r < MAP_H; r++) {
     for (let c = 0; c < MAP_W; c++) {
-      ctx.fillStyle = MAP[r][c] === BREAKER && game.breakerOn ? '#30ff60' : MAP[r][c] > 0 ? MINIMAP_COLORS[MAP[r][c]] : '#111';
+      ctx.fillStyle = (MAP[r][c] === SWITCH && game.switchOn) || (MAP[r][c] === BREAKER && game.breakerOn) ? '#30ff60' : MAP[r][c] > 0 ? MINIMAP_COLORS[MAP[r][c]] : '#111';
       ctx.fillRect(OX + c * S, OY + r * S, S - 1, S - 1);
     }
   }
-  ctx.fillStyle = game.switchOn ? '#30ff60' : '#ff9020'; // main switch console
-  ctx.fillRect(OX + MAIN_SWITCH.x * S - 2, OY + MAIN_SWITCH.y * S - 2, 3, 3);
   // Enemies (bright = alerted, dim = idle, dark = dead), projectiles
   for (const e of enemies) {
     if (e.type === 'dns') { ctx.fillStyle = e.state === 'dead' ? '#424' : '#e040ff'; ctx.fillRect(OX + e.x * S - 3, OY + e.y * S - 3, 6, 6); continue; }

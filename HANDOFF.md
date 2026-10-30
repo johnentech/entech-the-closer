@@ -370,6 +370,14 @@ Play-test: flipping the old main switch (on the east face of a C-shaped rack, fa
 
 ---
 
+### Main switch in the closet wall; closet themed as server racks ✅
+Play-test: the free-standing switch post (previous section) had confusing perspective, so it's gone (`M`, `TEX.console`, `consoleAhead`, the `isWall` square, the minimap dot). The rack C that used to surround the original switch stays removed, so the space in front of the wall is open.
+- **Main switch `X`** (type `SWITCH` = 8, concrete with the steel panel on its south face) sits in the middle of the closet wall at (10, 16). Pulling it sinks the 10 `L` cells on both sides while the switch block stays standing, Doom-style.
+- **Reach:** `doorAhead()` samples out to 2.6 tiles. Doors and the core breaker still need ≤ `USE_REACH` (1.8), but the main switch works out to `SWITCH_REACH` (2.6), about 2.4 tiles from the wall. The prompt appears while you're far enough back to see the wall sink on both sides. Up close, the one-tile switch fills most of the screen. Both switch panels are on the south face, so they're only usable from the south.
+- **Closet theme:** in `render()`, any wall face whose cell in front is closet floor (`CLOSET`) uses `RACK_FRAMES` (the blue server racks with blinking LEDs). That covers the closet's back and side walls, the back of the switch, and the breaker wall (panel drawn on top). The same cells seen from the office or the Server Room keep their own texture.
+
+---
+
 ## Remaining chunks
 
 ### Next session (user's list, 2026-10-29). Not started; discuss before coding
