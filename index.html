@@ -453,10 +453,14 @@ function sfx(name, x, y) {
 
 // Voice lines (the player character). Each event lists [file, subtitle, weight?] variants, loaded from
 // sounds/voice/<file>.wav (or .mp3). Missing files are skipped silently, so lines can be recorded a few at a time.
-//   weight   — optional: variants with weights are picked by weight (and may repeat); otherwise evenly, never twice in a row
+//   weight   — optional: variants with weights are picked by weight, otherwise evenly; never the same one twice in a
+//              row (except grunts)
 //   chance   — how often the line plays when its event fires
 //   cooldown — minimum ms between two lines of this event
 //   priority — a higher-priority line interrupts a lower one; equal or lower waits its turn (is dropped)
+//   every    — optional: a variant that hasn't played in this many lines of the event is played next
+//   grunt    — optional: plays on its own channel (damage grunts), so it never cuts off or blocks the other lines;
+//              a grunt still never restarts while the previous one is playing
 const VOICE_DIR  = 'sounds/voice/';
 const VOICE_EXTS = ['wav', 'mp3'];
 const SUBTITLES  = true;
@@ -475,17 +479,18 @@ const VOICE = {
   boss_intro:  { chance: 1,    cooldown: 0,     priority: 5, lines: [['boss_intro_1', 'You wanna get weird? I can get weird too.']] },
   boss_phase2: { chance: 1,    cooldown: 0,     priority: 4, lines: [['boss_phase2_1', 'Shadow IT? Who approved this?!']] },
   boss_phase3: { chance: 1,    cooldown: 0,     priority: 4, lines: [['boss_phase3_1', "TTL's hitting zero. Now or never."]] },
-  // Every hit gets a line; it cuts off a kill quip or pickup line but never restarts itself mid-line
-  hurt:        { chance: 1,    cooldown: 0,     priority: 2, lines: [['hurt_1', '', 0.5], ['hurt_2', '', 0.5]] },
+  // Every hit gets a grunt (on its own channel), unless the last one is still playing
+  hurt:        { chance: 1,    cooldown: 0,     priority: 2, grunt: true, lines: [['hurt_1', '', 0.5], ['hurt_2', '', 0.5]] },
   low_health:  { chance: 1,    cooldown: 20000, priority: 3, lines: [['low_health_1', 'I need coffee. Now.'], ['low_health_2', "SLA's about to breach..."]] },
   empty:       { chance: 1,    cooldown: 5000,  priority: 2, lines: [['empty_1', 'Out of keycaps!'], ['empty_2', "Keyboard's empty!"]] },
   empty_cannon: { chance: 1,   cooldown: 5000,  priority: 2, lines: [['empty_cannon_1', 'Out of closures!']] },
-  // Half of kills get a quip; one at a time, so a crowd dying at once doesn't stack lines
-  kill:        { chance: 0.5,  cooldown: 0,     priority: 1, lines: [['kill_get_rekt', 'Get rekt!', 0.4], ['kill_haha', 'HAHA!!', 0.4], ['kill_synez', 'That guy needs Synez OS!', 0.2]] },
+  // Half of kills get a quip; one at a time, so a crowd dying at once doesn't stack lines. Synez is the rare one
+  // (20% by weight, ~27% with no-repeats), but always comes up within 6 quips
+  kill:        { chance: 0.5,  cooldown: 0,     priority: 1, every: 6, lines: [['kill_get_rekt', 'Get rekt!', 0.4], ['kill_haha', 'HAHA!!', 0.4], ['kill_synez', 'That guy needs Synez OS!', 0.2]] },
   death:       { chance: 1,    cooldown: 0,     priority: 9, lines: [['death_1', '']] },
   victory:     { chance: 1,    cooldown: 0,     priority: 9, lines: [['victory_1', "That's why I'm the GOAT! The GOAT!!"]] },
 };
-const voice = { el: null, priority: -1, last: {}, lastClip: null, sub: '', subUntil: 0 };
+const voice = { el: null, priority: -1, last: {}, sub: '', subUntil: 0, gruntEl: null };
 
 // Try each extension in turn; a clip becomes playable once its file has loaded
 function loadClip(clip, exts) {
@@ -496,16 +501,33 @@ function loadClip(clip, exts) {
   el.src = VOICE_DIR + clip.file + '.' + exts[0];
 }
 for (const ev of Object.values(VOICE)) {
-  ev.clips = ev.lines.map(([file, text, weight]) => ({ file, text, weight, el: null }));
+  ev.clips = ev.lines.map(([file, text, weight]) => ({ file, text, weight, el: null, since: 0 }));
   ev.clips.forEach(clip => loadClip(clip, VOICE_EXTS));
 }
 
 function stopVoice() {
   if (voice.el) { voice.el.pause(); voice.el = null; }
+  if (audio.muted && voice.gruntEl) { voice.gruntEl.pause(); voice.gruntEl = null; }
   voice.priority = -1;
   voice.subUntil = 0;
   if (audio.sfx) audio.sfx.gain.setTargetAtTime(1, audio.ctx.currentTime, 0.1);
   if (music.duck) music.duck.gain.setTargetAtTime(1, audio.ctx.currentTime, 0.1);
+}
+
+// Pick an event's variant: one overdue by ev.every if any, else by weight (or evenly), never the previous one twice.
+// Grunts may repeat (with only two, no-repeat would just alternate them).
+function pickClip(ev, ready) {
+  const overdue = ev.every && ready.find(c => c.since >= ev.every - 1);
+  let clip = overdue;
+  if (!clip) {
+    const pool = ready.length > 1 && !ev.grunt ? ready.filter(c => c !== ev.lastClip) : ready;
+    const weight = c => c.weight || 1;
+    let r = Math.random() * pool.reduce((sum, c) => sum + weight(c), 0);
+    clip = pool.find(c => (r -= weight(c)) < 0) || pool[pool.length - 1];
+  }
+  for (const c of ev.clips) c.since = c === clip ? 0 : c.since + 1;
+  ev.lastClip = clip;
+  return clip;
 }
 
 // Fire a voice event; returns true if a line started
@@ -514,22 +536,20 @@ function say(event) {
   if (!ev || audio.muted) return false;
   const now = performance.now();
   if (now - (voice.last[event] ?? -Infinity) < ev.cooldown) return false;
-  const busy = voice.el && !voice.el.paused && !voice.el.ended;
-  if (busy && ev.priority <= voice.priority) return false;
+  const playing = el => el && !el.paused && !el.ended;
+  if (ev.grunt ? playing(voice.gruntEl) : playing(voice.el) && ev.priority <= voice.priority) return false;
   const ready = ev.clips.filter(c => c.el);
   if (!ready.length || Math.random() > ev.chance) return false;
-  let clip;
-  if (ready[0].weight) {
-    let r = Math.random() * ready.reduce((sum, c) => sum + c.weight, 0);
-    clip = ready.find(c => (r -= c.weight) < 0) || ready[ready.length - 1];
-  } else {
-    // Don't repeat the previous variant back to back
-    const pool = ready.length > 1 ? ready.filter(c => c !== voice.lastClip) : ready;
-    clip = pool[Math.random() * pool.length | 0];
-  }
-  if (busy) voice.el.pause();
+  const clip = pickClip(ev, ready);
   voice.last[event] = now;
-  voice.lastClip = clip;
+  if (ev.grunt) { // own channel: no subtitle or ducking, nothing else interrupted
+    voice.gruntEl = clip.el;
+    clip.el.currentTime = 0;
+    clip.el.play().catch(() => {});
+    return true;
+  }
+  const busy = playing(voice.el);
+  if (busy) voice.el.pause();
   voice.el = clip.el;
   voice.priority = ev.priority;
   clip.el.currentTime = 0;

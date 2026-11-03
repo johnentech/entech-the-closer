@@ -387,6 +387,13 @@ Play-test: you had to press a key twice to get past the title (once to start the
 
 ---
 
+### Voice: separate grunt channel, Synez more often ✅
+Measured by replaying `say()` against the real clip lengths: in a busy fight only ~27% of kills got a quip, and 55% of those were cut off by a damage grunt. Synez (20%) was never heard in ~7% of runs (~12 quips per run).
+- **Grunt channel:** events with `grunt: true` (`hurt`) play on their own `<audio>` (`voice.gruntEl`), with no subtitle and no ducking. They never cut off or block the main voice line, and a grunt still never restarts while the last one is playing. Muting stops both channels. Busy fight now: ~40% of kills get a quip (the rest are blocked by a quip still playing), and none get cut off.
+- **`pickClip()`:** weighted (or even) pick that never repeats the event's previous variant (grunts excepted, so the two damage grunts stay random 50/50 instead of alternating). An optional `every` field forces a variant that hasn't played in that many lines. `kill` has `every: 6`, so Synez plays at least every 6th quip and comes up ~27% of the time. Verified over 20,000 simulated runs of 12 quips, and 565 quips through the real `say()`: no repeats, never more than 5 without Synez.
+
+---
+
 ## Remaining chunks
 
 ### Next session (user's list, 2026-10-29). Not started; discuss before coding

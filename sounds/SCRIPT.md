@@ -108,7 +108,7 @@ Plays when the arena door seals behind you and the DNS appears. This is the big 
 | `boss_phase3_1` | "TTL's hitting zero. Now or never." |
 
 ### Taking damage, every hit ✅ *recorded*
-A line plays on every hit, 50/50 between the two. It can cut off a kill quip or pickup line, but never restarts itself mid-line.
+A grunt plays on every hit, 50/50 between the two, on its own channel, so it never cuts off or blocks the other lines. It never restarts itself mid-grunt, so a hit while one is still playing gets none.
 
 | File | Line |
 |---|---|
@@ -129,7 +129,7 @@ A line plays on every hit, 50/50 between the two. It can cut off a kill quip or 
 | `empty_cannon_1` | "Out of closures!" *(Closing Cannon)* |
 
 ### Enemy killed, 50% chance ✅ *recorded*
-Half of kills get a quip, picked by weight. Only one line plays at a time, so killing a crowd at once doesn't stack them.
+Half of kills get a quip, picked by weight, never the same one twice in a row; Synez always comes up within 6 quips (~27% overall). Only one quip plays at a time, so killing a crowd at once doesn't stack them.
 
 | File | Weight | Line |
 |---|---|---|
