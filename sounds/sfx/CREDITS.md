@@ -14,6 +14,7 @@ The `SFX_FILES` table in `index.html` maps game sounds to these files.
 | Enemy shots / ink splat / Shadow IT claw | `dsfirsht` / `dsfirxpl` / `dsclaw` |
 | The DNS: appears / winds up / pain / NXDOMAIN volley / NXDOMAIN impact / dies | `dscacsit` / `dsdmact` / `dsdmpain` / `dsfirsht` / `dsfirxpl` / `dscacdth` |
 | Door opens / locked / override switch | `dsdoropn` / `dsnoway` / `dsswtchn` |
+| Mouse hit (melee) | `dspunch` |
 | Keycaps & closures (ammo) pickups | `dssgcock` (shotgun pump) |
 | Coffee / Closing Cannon / Flush DNS Cache pickups | `dsitemup` / `dswpnup` / `dsgetpow` |
 

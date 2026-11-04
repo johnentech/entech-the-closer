@@ -394,6 +394,12 @@ Measured by replaying `say()` against the real clip lengths: in a busy fight onl
 
 ---
 
+### Core breaker locked until the closet is cleared; Freedoom punch ✅
+- **Breaker lock:** `closetLeft()` counts the closet monsters (`e.closet`) still alive. While any are, `flipBreaker()` refuses ("BREAKER LOCKED — CLEAR THE CLOSET (n LEFT)" + `denied`). The prompt reads "CLEAR THE CLOSET TO UNLOCK (n LEFT)" in red, and the panel light stays solid red (`drawSwitchColumn(..., locked)`) instead of blinking. Killing the last one shows "CLOSET CLEAR — CORE BREAKER UNLOCKED" (in `damageEnemy`). `render()` works out `breakerLocked` once per frame.
+- **Punch sound:** the mouse's hit now plays Freedoom's `dspunch.wav` (`SFX_FILES.punch`), taken from the freedoom/freedoom GitHub `sounds/` folder (BSD, credited in `sounds/sfx/CREDITS.md`). The synthesized punch stays as the fallback. The swing whoosh and the wall knock are still synthesized.
+
+---
+
 ## Remaining chunks
 
 ### Next session (user's list, 2026-10-29). Not started; discuss before coding

@@ -393,7 +393,8 @@ const SFX_FILES = {
   dns_intro: ['dscacsit'], dns_windup: ['dsdmact'], dns_pain: ['dsdmpain'], nx: ['dsfirsht'], nx_hit: ['dsfirxpl'], servfail: ['dscacdth'],
   // Doors, pickups, switch
   door: ['dsdoropn'], denied: ['dsnoway'], lever: ['dsswtchn'],
-  ammo: ['dssgcock'], heal: ['dsitemup'], // ammo = shotgun pump clunk weapon: ['dswpnup'], powerup: ['dsgetpow'],
+  ammo: ['dssgcock'], heal: ['dsitemup'],
+  punch: ['dspunch'],      // mouse connects // ammo = shotgun pump clunk weapon: ['dswpnup'], powerup: ['dsgetpow'],
 };
 const sfxBufs = {}; // file → AudioBuffer (decoded via fetch; needs http://)
 const sfxEls  = {}; // file → <audio> fallback when opened as file:// (fetch is blocked there; no stereo panning)
@@ -1343,6 +1344,7 @@ function damageEnemy(e, dmg, now) {
     e.state = 'dead';
     game.kills++;
     sfx(e.type + '_die', e.x, e.y);
+    if (e.closet && !closetLeft()) showMessage('CLOSET CLEAR  —  CORE BREAKER UNLOCKED', 3000);
     say('kill');
     if (e.bossAdd) {
       // Shadow IT always drops coffee and closures, side by side (across your line of sight), so the fight keeps you supplied
@@ -1816,8 +1818,17 @@ function flipSwitch() {
   say('closet');
 }
 
+// The core breaker stays locked until every closet monster is dead, so you can't skip the ambush
+const closetLeft = () => enemies.filter(e => e.closet && e.state !== 'dead').length;
+
 function flipBreaker() {
   if (game.breakerOn) return;
+  const left = closetLeft();
+  if (left) {
+    showMessage(`BREAKER LOCKED  —  CLEAR THE CLOSET (${left} LEFT)`);
+    sfx('denied');
+    return;
+  }
   game.breakerOn = true;
   showMessage('CORE BREAKER ON  —  CORE ACCESS UNLOCKED', 3000);
   sfx('lever');
@@ -2773,6 +2784,7 @@ function render() {
   // Cast one ray per screen column
   const blink = performance.now() / RACK_BLINK_MS | 0;
   const lift = closetHeight(), lowering = lift > 0 && lift < 1;
+  const breakerLocked = !game.breakerOn && closetLeft() > 0;
   for (let x = 0; x < SCREEN_W; x++) {
     const camX = 2 * x / SCREEN_W - 1;
     const rdx = player.dirX + player.planeX * camX, rdy = player.dirY + player.planeY * camX;
@@ -2794,7 +2806,7 @@ function render() {
     ctx.fillStyle = FOG_STYLES[Math.min(FOG_STEPS, dist * FOG_RATE / FOG_MAX * FOG_STEPS | 0)];
     ctx.fillRect(x, y0, 1, y1 - y0 + 1);
     if (DOOR_TYPES.includes(rayHit)) drawDoorColumn(x, y0, y1, lineH, rayHit);
-    else if ((rayHit === SWITCH || rayHit === BREAKER) && raySide === 1 && rdy < 0) drawSwitchColumn(x, lineH, rayHit === SWITCH ? game.switchOn : game.breakerOn);
+    else if ((rayHit === SWITCH || rayHit === BREAKER) && raySide === 1 && rdy < 0) drawSwitchColumn(x, lineH, rayHit === SWITCH ? game.switchOn : game.breakerOn, rayHit === BREAKER && breakerLocked);
 
     // A closet wall sinking into the floor: the top part of its texture, standing up from the floor line
     if (lDist < dist) {
@@ -3159,16 +3171,16 @@ function drawDoorColumn(x, y0, y1, lineH, type) {
 }
 
 // Switch panel (main switch, core breaker) on a wall's south face: a steel panel with a status light and a lever (up = off/red, down = on/green)
-function drawSwitchColumn(x, lineH, on) {
+function drawSwitchColumn(x, lineH, on, locked) {
   const u = rayWallX;
   if (u < 0.28 || u > 0.72) return;
   const top = HALF_H - lineH * 0.2, h = lineH * 0.4;
   ctx.fillStyle = u < 0.31 || u > 0.69 ? '#111' : '#5a6068'; // panel + dark frame
   ctx.fillRect(x, top, 1, h);
   if (u < 0.31 || u > 0.69) return;
-  // Status light (blinks red while off)
+  // Status light: green on, solid red while locked, blinking red while it's waiting to be flipped
   if (u > 0.44 && u < 0.56) {
-    ctx.fillStyle = on ? '#30ff60' : (performance.now() / 400 | 0) % 2 ? '#ff3030' : '#601010';
+    ctx.fillStyle = on ? '#30ff60' : locked || (performance.now() / 400 | 0) % 2 ? '#ff3030' : '#601010';
     ctx.fillRect(x, top + h * 0.08, 1, h * 0.12);
   }
   // Lever slot and handle
@@ -4059,8 +4071,9 @@ function drawHUD() {
       ctx.fillStyle = game.switchOn ? '#30ff60' : '#e8e8e8';
       ctx.fillText(game.switchOn ? 'MAIN SWITCH RESET' : '[ E ]  RESET MAIN SWITCH', SCREEN_W / 2, HALF_H + 50);
     } else if (game.usePrompt.type === BREAKER) {
-      ctx.fillStyle = game.breakerOn ? '#30ff60' : '#e8e8e8';
-      ctx.fillText(game.breakerOn ? 'CORE BREAKER ON' : '[ E ]  FLIP CORE BREAKER', SCREEN_W / 2, HALF_H + 50);
+      const left = closetLeft();
+      ctx.fillStyle = game.breakerOn ? '#30ff60' : left ? '#ff5050' : '#e8e8e8';
+      ctx.fillText(game.breakerOn ? 'CORE BREAKER ON' : left ? `CLEAR THE CLOSET TO UNLOCK  (${left} LEFT)` : '[ E ]  FLIP CORE BREAKER', SCREEN_W / 2, HALF_H + 50);
     } else {
       const type = game.usePrompt.type, locked = doorLocked(type);
       const lockedText = type === SECURITY_DOOR ? 'ACQUIRE CLOSING CANNON TO PROCEED'
