@@ -35,14 +35,16 @@ const COLLIDE    = 0.22; // collision margin
 // Walls:    # concrete   = cubicle divider   S server rack   D boss door   K security door   % IT closet shelving   @ arena wall
 //           X main switch   Y core breaker (both concrete, panel on the south face)
 //           L monster-closet wall (looks like concrete; sinks into the floor when the main switch is flipped)
+//           Z secret wall (concrete with a faint purple glow at its base; E sinks it) into the Synez OS shrine
+//           O the shrine's Synez OS screen (a CRT on its south face)
 // Entities: P player start   p Printer   r Rogue Router   t keycaps (keyboard ammo)   c coffee
 //           C Closing Cannon   o closures (cannon ammo)   F Flush DNS Cache   B DNS boss spawn
 const LEVEL = [
-  '########################################',
-  '#.................###########%....p....#',
-  '#.P...............###########%.%%...%%.#',
-  '#...==..==...==...###########%.%%...%%.#',
-  '#...=.p.=....=.t..###########%......r..#',
+  '#######################O################',
+  '#.................##...F...##%....p....#',
+  '#.P...............##.......##%.%%...%%.#',
+  '#...==..==...==...##.......##%.%%...%%.#',
+  '#...=.p.=....=.t..#####Z#####%......r..#',
   '#......................................#',
   '#.........................r............#',
   '#...=...=....=....####..#####%.%%...%%.#',
@@ -69,12 +71,14 @@ const LEVEL = [
   '#F..........c............@c..........tF@',
   '#########################@@@@@@@@@@@@@@@',
 ];
-const WALL_CHARS = { '#': 1, '=': 2, 'S': 3, 'D': 4, '%': 5, '@': 6, 'K': 7, 'X': 8, 'Y': 9, 'L': 10 };
+const WALL_CHARS = { '#': 1, '=': 2, 'S': 3, 'D': 4, '%': 5, '@': 6, 'K': 7, 'X': 8, 'Y': 9, 'L': 10, 'Z': 11, 'O': 12 };
 const DOOR          = 4;  // boss door
 const SECURITY_DOOR = 7;  // server room doors, unlocked by the Closing Cannon
 const SWITCH        = 8;  // main switch, opens the monster closet around it
 const BREAKER       = 9;  // core breaker in the closet, unlocks the boss door
 const CLOSET_WALL   = 10; // lowers when the main switch is flipped
+const SECRET_WALL   = 11; // into the Synez OS shrine; lowers when you press E on it
+const SYNEZ_SCREEN  = 12; // the shrine's CRT
 const DOOR_TYPES    = [DOOR, SECURITY_DOOR];
 
 // Parse into MAP (0 = floor, >0 = wall type) and a list of entity spawns
@@ -83,10 +87,14 @@ const LEVEL_SPAWNS = []; // { ch, x, y } — processed once enemies/pickups exis
 let PLAYER_START = { x: 1.5, y: 1.5 };
 let BOSS_DOOR    = null;
 let BOSS_SPAWN   = null;
+let SECRET_DOOR  = null;
+let SYNEZ_CELL   = null;
 LEVEL.forEach((row, y) => {
   MAP.push([...row].map((ch, x) => {
     if (WALL_CHARS[ch]) {
       if (ch === 'D') BOSS_DOOR = { x, y };
+      if (ch === 'Z') SECRET_DOOR = { x, y };
+      if (ch === 'O') SYNEZ_CELL  = { x, y };
       return WALL_CHARS[ch];
     }
     if (ch === 'P')      PLAYER_START = { x: x + 0.5, y: y + 0.5 };
@@ -99,7 +107,7 @@ const MAP_W = MAP[0].length;
 const MAP_H = MAP.length;
 
 // Walls are textured (WALL_TEX, see "Map textures"); the minimap uses flat colors
-const MINIMAP_COLORS = { 1: '#999', 2: '#a08050', 3: '#4a6a9a', 4: '#e33', 5: '#7a8060', 6: '#7a4aa0', 7: '#e0b020', 8: '#ff9020', 9: '#ff9020', 10: '#999' };
+const MINIMAP_COLORS = { 1: '#999', 2: '#a08050', 3: '#4a6a9a', 4: '#e33', 5: '#7a8060', 6: '#7a4aa0', 7: '#e0b020', 8: '#ff9020', 9: '#ff9020', 10: '#999', 11: '#999', 12: '#999' };
 
 // Monster closet: the floor cells behind the closet wall (flood fill north from it), so their monsters can be woken
 // and the floor matched to the Server Room
@@ -122,6 +130,35 @@ MAP.forEach((row, y) => row.forEach((v, x) => { if (v === CLOSET_WALL) CLOSET_WA
 const CLOSET_LOWER_MS = 1200; // how long the wall takes to sink
 const CLOSET_DELAY_MS = 350;  // after the switch clunks
 const closet = { at: 0, open: false }; // at = when the wall starts lowering (0 = not yet)
+
+// Secret: the Synez OS shrine. Its floor cells (flood fill north from the secret wall) get their own floor, walls,
+// tint, and stay hidden on the minimap until you walk in.
+const SHRINE = new Uint8Array(MAP_W * MAP_H);
+{
+  const queue = [[SECRET_DOOR.x, SECRET_DOOR.y - 1]];
+  SHRINE[(SECRET_DOOR.y - 1) * MAP_W + SECRET_DOOR.x] = 1;
+  while (queue.length) {
+    const [cx, cy] = queue.pop();
+    for (const [ox, oy] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) {
+      const nx = cx + ox, ny = cy + oy;
+      if (MAP[ny][nx] !== 0 || SHRINE[ny * MAP_W + nx]) continue;
+      SHRINE[ny * MAP_W + nx] = 1;
+      queue.push([nx, ny]);
+    }
+  }
+}
+const SECRET_LOWER_MS = 1000;
+const secret = { at: 0, open: false, found: false }; // at = when the wall starts lowering
+// Banners with the logo hang on the shrine's side walls, level with its middle row
+const SHRINE_BANNERS = new Set();
+{
+  let x0 = MAP_W, x1 = 0, ys = [];
+  SHRINE.forEach((v, i) => { if (v) { x0 = Math.min(x0, i % MAP_W); x1 = Math.max(x1, i % MAP_W); ys.push(i / MAP_W | 0); } });
+  const my = Math.round((Math.min(...ys) + Math.max(...ys)) / 2);
+  SHRINE_BANNERS.add(my * MAP_W + x0 - 1).add(my * MAP_W + x1 + 1);
+}
+// Two candles flank the screen
+const SHRINE_CANDLES = [{ x: SYNEZ_CELL.x + 0.5 - 1.15, y: SYNEZ_CELL.y + 1.4 }, { x: SYNEZ_CELL.x + 0.5 + 1.15, y: SYNEZ_CELL.y + 1.4 }];
 
 const canvas = document.getElementById('game');
 const ctx = canvas.getContext('2d');
@@ -148,6 +185,7 @@ const game = {
   hasCannon: false,
   weapon: 'keyboard',
   kills: 0,
+  secrets: 0,   // secret areas found (of 1)
   hurt: 0,      // red damage flash, 1 → 0
   pickup: 0,    // green pickup flash, 1 → 0
   fireFlash: 0, // white flash when the keyboard fires, 1 → 0
@@ -371,6 +409,11 @@ const SFX = {
   } },
   type:    { gap: 30, play: (o, t) => noise(o, t, { ms: 18, vol: 0.12, f0: 3500 + Math.random() * 1500, q: 6 }) },
   victory: { play: (o, t) => [523, 659, 784, 1047].forEach((f, i) => tone(o, t + i * 0.09, { type: 'triangle', f0: f, ms: 1400 - i * 90, vol: 0.18, attack: 10 })) },
+  secret:  { play: (o, t) => {
+    tone(o, t, { type: 'triangle', f0: 82, f1: 110, ms: 1600, vol: 0.16, attack: 250 });
+    [330, 415, 494, 659, 831].forEach((f, i) => tone(o, t + i * 0.1, { type: 'sine', f0: f, ms: 1100 - i * 80, vol: 0.13, attack: 6 }));
+    noise(o, t + 0.1, { ms: 900, vol: 0.05, f0: 7000, q: 2, attack: 300 });
+  } },
 };
 
 // Recorded effects from Freedoom (BSD license, see sounds/sfx/FREEDOOM-LICENSE.adoc), in sounds/sfx/<file>.wav.
@@ -1796,7 +1839,7 @@ function doorAhead() {
     const type = MAP[cy] && MAP[cy][cx];
     if (d > (type === SWITCH ? SWITCH_REACH : USE_REACH)) return null;
     if (type === SWITCH || type === BREAKER) return player.y > cy + 1 ? { x: cx, y: cy, type } : null;
-    return DOOR_TYPES.includes(type) ? { x: cx, y: cy, type } : null;
+    return DOOR_TYPES.includes(type) || type === SECRET_WALL || type === SYNEZ_SCREEN ? { x: cx, y: cy, type } : null;
   }
   return null;
 }
@@ -1837,6 +1880,15 @@ function flipBreaker() {
   say('switch');
 }
 
+// Height of the secret wall: 1 standing, sinking to 0 over SECRET_LOWER_MS
+function secretHeight() {
+  if (secret.open) return 0;
+  if (!secret.at) return 1;
+  return Math.max(0, Math.min(1, 1 - (performance.now() - secret.at) / SECRET_LOWER_MS));
+}
+const liftHeight = type => type === SECRET_WALL ? secretHeight() : closetHeight();
+const isSinking  = h => h > 0 && h < 1;
+
 // Height of the closet wall: 1 standing, sinking to 0 over CLOSET_LOWER_MS
 function closetHeight() {
   if (closet.open) return 0;
@@ -1861,11 +1913,45 @@ function updateCloset(now) {
   flowCell = -1;
 }
 
+// The secret wall: no prompt, just the purple glow at its base. E sinks it (and boots the Synez OS screen behind it).
+function openSecret() {
+  if (secret.at) return;
+  const now = performance.now();
+  secret.at = now;
+  synez.at = now + SECRET_LOWER_MS * 0.3;
+  sfx('door', SECRET_DOOR.x + 0.5, SECRET_DOOR.y + 0.5);
+  sfx('rumble', SECRET_DOOR.x + 0.5, SECRET_DOOR.y + 0.5);
+}
+
+// From update(): the wall finishes sinking (walkable), and the first step inside counts the secret
+function updateSecret(now) {
+  if (secret.at && !secret.open && now - secret.at >= SECRET_LOWER_MS) {
+    secret.open = true;
+    MAP[SECRET_DOOR.y][SECRET_DOOR.x] = 0;
+    flowCell = -1;
+  }
+  if (!secret.found && SHRINE[Math.floor(player.y) * MAP_W + Math.floor(player.x)]) {
+    secret.found = true;
+    game.secrets++;
+    showMessage('SECRET FOUND  —  THE SYNEZ OS SHRINE', 4000);
+    sfx('secret');
+  }
+}
+
+// E on the shrine's screen: straight to the reboot
+function rebootSynez() {
+  synez.at = performance.now() - SYN_REBOOT_AT;
+  showMessage('CTRL + ALT + DEL  —  SYNEZ OS IS REBOOTING');
+  sfx('switch');
+}
+
 function useAction() {
   const d = doorAhead();
   if (!d || game.over) return;
   if (d.type === SWITCH) { flipSwitch(); return; }
   if (d.type === BREAKER) { flipBreaker(); return; }
+  if (d.type === SECRET_WALL) { openSecret(); return; }
+  if (d.type === SYNEZ_SCREEN) { rebootSynez(); return; }
   if (doorLocked(d.type)) {
     showMessage(d.type === SECURITY_DOOR ? 'ACCESS DENIED  —  CLEARANCE IS IN THE IT CLOSET'
               : game.bossTriggered ? 'LOCKED  —  RESOLVE THE DNS FIRST'
@@ -2370,9 +2456,9 @@ function isWall(x, y) {
 // DDA march from (ox,oy) along (dx,dy). Returns distance in ray-parameter units:
 // perpendicular distance for camera rays, true distance when (dx,dy) is normalized.
 // Sets rayHit (wall type), raySide (0 = EW face, 1 = NS face), rayWallX (0–1 across the face), rayMapX/Y (cell hit).
-// seeLifts (rendering only): pass through closet walls while they sink, recording the first one in liftDist/Side/WallX.
+// seeLifts (rendering only): pass through closet / secret walls while they sink, recording the first one in liftDist/Side/WallX.
 let rayHit = 0, raySide = 0, rayWallX = 0, rayMapX = 0, rayMapY = 0;
-let liftDist = Infinity, liftSide = 0, liftWallX = 0;
+let liftDist = Infinity, liftSide = 0, liftWallX = 0, liftType = 0;
 function castRay(ox, oy, dx, dy, seeLifts) {
   let mapX = Math.floor(ox);
   let mapY = Math.floor(oy);
@@ -2393,8 +2479,9 @@ function castRay(ox, oy, dx, dy, seeLifts) {
     else           { sdY += ddY; mapY += stepY; side = 1; }
     if (mapX < 0 || mapX >= MAP_W || mapY < 0 || mapY >= MAP_H) hit = 1;
     else hit = MAP[mapY][mapX];
-    if (hit === CLOSET_WALL && seeLifts) {
+    if (seeLifts && (hit === CLOSET_WALL || hit === SECRET_WALL) && liftHeight(hit) < 1) {
       if (liftDist === Infinity) {
+        liftType = hit;
         liftDist = side === 0 ? sdX - ddX : sdY - ddY;
         liftSide = side;
         liftWallX = side === 0 ? oy + liftDist * dy : ox + liftDist * dx;
@@ -2532,6 +2619,7 @@ function update() {
   updateProjectiles(now);
   updatePickups();
   updateCloset(now);
+  updateSecret(now);
   checkBossTrigger();
   game.usePrompt = doorAhead();
 }
@@ -2663,8 +2751,117 @@ const WALL_TEX = {
   8: [faces(MAP_TEX.concrete)],  // main switch (panel drawn on top)
   9: [faces(MAP_TEX.concrete)],  // core breaker (panel drawn on top)
   10: [faces(MAP_TEX.concrete)], // monster-closet wall: plain concrete, no tell
+  11: [faces(makeTex(64, 64, (g, R) => {   // secret wall: concrete, a hairline crack, purple light leaking out at the base
+    g.drawImage(MAP_TEX.concrete, 0, 0);
+    for (const [x, y] of [[38, 6], [37, 7], [37, 8], [36, 9], [36, 10], [37, 11], [37, 12], [38, 13], [38, 14], [39, 15], [39, 16]]) R('#4e4e4e', x, y, 1, 1);
+    R('rgba(150,70,255,0.18)', 0, 57, 64, 3);
+    R('rgba(170,90,255,0.4)', 0, 60, 64, 2);
+    R('#c890ff', 0, 62, 64, 1);
+    R('#5a2aa0', 0, 63, 64, 1);
+  }))],
+  12: [faces(MAP_TEX.concrete)], // Synez OS screen (the CRT is drawn on top; shrine walls show inside)
 };
 const RACK_BLINK_MS = 350;
+
+// --- Synez OS shrine ---
+// Walls: near-black panels on a faint purple grid (like the logo's background), with a glowing trim line
+const SHRINE_WALL = makeTex(64, 64, (g, R) => {
+  R('#0d0817', 0, 0, 64, 64);
+  speckle(R, rng(16), 200, ['#0a0612', '#120c1e']);
+  for (let i = 0; i < 64; i += 16) { R('#1c1232', i, 0, 1, 64); R('#1c1232', 0, i, 64, 1); }
+  R('#3a1c70', 0, 44, 64, 1); R('#9a50ff', 0, 45, 64, 1); R('#3a1c70', 0, 46, 64, 1);
+});
+const SHRINE_FRAMES = [faces(SHRINE_WALL)];
+let BANNER_FRAMES = SHRINE_FRAMES; // replaced by the logo banner once the logo loads
+const synezLogo = new Image();
+const LOGO_CROP = [80, 75, 240, 240]; // the S and its two nodes, in the 400×400 logo
+synezLogo.onload = () => {
+  BANNER_FRAMES = [faces(makeTex(64, 64, (g, R) => {
+    g.drawImage(SHRINE_WALL, 0, 0);
+    R('#6a6a72', 14, 3, 36, 2); // rod
+    g.fillStyle = '#1a0f2e';
+    g.beginPath(); g.moveTo(17, 5); g.lineTo(47, 5); g.lineTo(47, 54); g.lineTo(32, 46); g.lineTo(17, 54); g.closePath(); g.fill();
+    g.strokeStyle = '#8a40ff'; g.lineWidth = 1;
+    g.beginPath(); g.moveTo(18.5, 5); g.lineTo(18.5, 51.5); g.lineTo(32, 44.5); g.lineTo(45.5, 51.5); g.lineTo(45.5, 5); g.stroke();
+    g.drawImage(synezLogo, ...LOGO_CROP, 20, 10, 24, 24);
+    R('#8a40ff', 22, 38, 20, 1);
+  }))];
+};
+synezLogo.src = 'art/synez-logo.png';
+
+// Candles: purple wax, a two-frame flicker, and a soft glow sprite behind
+const CANDLE_TEX = [0, 1].map(f => outlineTex(makeTex(10, 28, (g, R) => {
+  R('#5a2a9a', 2, 11, 6, 17); R('#7a4ac0', 3, 11, 1, 17); R('#3e1a70', 7, 11, 1, 17);
+  R('#7a4ac0', 2, 10, 6, 2); R('#7a4ac0', 6, 12, 1, 4); R('#7a4ac0', 2, 13, 1, 3); // drips
+  R('#222', 4, 8, 1, 2);
+  R('#ff8020', f ? 3 : 4, 3, 3, 5); R('#ffc040', 4, f ? 2 : 3, 2, 5); R('#fff2c0', 4, 5, 1, 2);
+})));
+const CANDLE_GLOW = radialTex(32, [[0, 'rgba(230,170,255,0.9)'], [0.35, 'rgba(160,70,255,0.4)'], [1, 'rgba(90,0,200,0)']]);
+
+// The screen: a 160×120 canvas redrawn (at most ~30 times a second) while it's on screen. A 15 s loop:
+// boot (logo, spinner) → "installing update 3 of 9,847" stuck at 99% → purple BSOD → black, cursor → again.
+// synez.at = when the loop started (set as the secret wall opens; E on the screen jumps to the reboot).
+const SYN_W = 160, SYN_H = 120, SYN_LOOP = 15000, SYN_UPDATE_AT = 4000, SYN_BSOD_AT = 8000, SYN_REBOOT_AT = 13000;
+const synez = { at: 0, drawnAt: -1e9, c: makeTex(SYN_W, SYN_H, () => {}) };
+function synezScreen(now) {
+  if (Math.abs(now - synez.drawnAt) < 33) return synez.c;
+  synez.drawnAt = now;
+  const g = synez.c.getContext('2d'), t = Math.max(0, now - synez.at) % SYN_LOOP, cx = SYN_W / 2;
+  const text = (str, x, y, font, color, align = 'center') => { g.font = font; g.fillStyle = color; g.textAlign = align; g.fillText(str, x, y); };
+  g.textBaseline = 'middle';
+  if (t < SYN_UPDATE_AT) {
+    g.fillStyle = '#07040d'; g.fillRect(0, 0, SYN_W, SYN_H);
+    g.globalAlpha = Math.min(1, t / 800);
+    if (synezLogo.complete && synezLogo.naturalWidth) g.drawImage(synezLogo, ...LOGO_CROP, cx - 27, 10, 54, 54);
+    text('Synez OS', cx, 76, 'bold 12px monospace', '#ffffff');
+    g.globalAlpha = 1;
+    if (t > 900) for (let i = 0; i < 5; i++) {
+      const a = t / 1000 * Math.PI * 1.6 - i * 0.4;
+      g.fillStyle = `rgba(210,170,255,${1 - i * 0.18})`;
+      g.fillRect(cx + Math.cos(a) * 8 - 1, 100 + Math.sin(a) * 8 - 1, 2, 2);
+    }
+  } else if (t < SYN_BSOD_AT) {
+    const k = Math.min(0.99, (t - SYN_UPDATE_AT) / 2500);
+    g.fillStyle = '#140a26'; g.fillRect(0, 0, SYN_W, SYN_H);
+    text('Installing update', cx, 30, 'bold 10px monospace', '#e8dcff');
+    text('3 of 9,847', cx, 44, '9px monospace', '#b8a4e0');
+    g.fillStyle = '#3a2a5a'; g.fillRect(cx - 50, 60, 100, 7);
+    g.fillStyle = '#9a50ff'; g.fillRect(cx - 49, 61, 98 * k, 5);
+    text(`${Math.floor(k * 100)}%`, cx, 80, 'bold 9px monospace', '#e8dcff');
+    text('Do not turn off your PC.', cx, 102, '8px monospace', '#8a78b0');
+  } else if (t < SYN_REBOOT_AT) {
+    const pct = Math.min(100, Math.floor((t - SYN_BSOD_AT) / 3500 * 100));
+    g.fillStyle = '#3a1a8c'; g.fillRect(0, 0, SYN_W, SYN_H);
+    text(':(', 12, 26, 'bold 30px monospace', '#ffffff', 'left');
+    text('Your PC ran into a problem', 12, 56, '8px monospace', '#ffffff', 'left');
+    text('and needs to restart.', 12, 67, '8px monospace', '#ffffff', 'left');
+    text(`${pct}% complete`, 12, 82, '8px monospace', '#ffffff', 'left');
+    text('Stop code:', 12, 98, '7px monospace', '#d0c0ff', 'left');
+    text('WORKS_ON_MY_MACHINE', 12, 108, 'bold 7px monospace', '#d0c0ff', 'left');
+  } else {
+    g.fillStyle = '#000'; g.fillRect(0, 0, SYN_W, SYN_H);
+    if ((t / 400 | 0) % 2) { g.fillStyle = '#ccc'; g.fillRect(10, 12, 7, 2); }
+  }
+  g.fillStyle = 'rgba(0,0,0,0.22)'; // scanlines
+  for (let y = 0; y < SYN_H; y += 2) g.fillRect(0, y, SYN_W, 1);
+  return synez.c;
+}
+
+// One column of the CRT on the screen cell's south face: a purple halo on the wall, the dark bezel, the glowing
+// screen (drawn after the fog, so it stays bright from across the room) and a power LED
+function drawSynezColumn(x, lineH) {
+  const u = rayWallX;
+  if (u < 0.06 || u > 0.94) return;
+  const top = HALF_H - lineH * 0.4, h = lineH * 0.58;
+  ctx.fillStyle = 'rgba(150,70,255,0.2)';
+  ctx.fillRect(x, top - lineH * 0.05, 1, h + lineH * 0.1);
+  if (u < 0.14 || u > 0.86) return;
+  ctx.fillStyle = u < 0.16 || u > 0.84 ? '#120e18' : '#2b2535';
+  ctx.fillRect(x, top, 1, h);
+  if (u > 0.74 && u < 0.78) { ctx.fillStyle = '#b070ff'; ctx.fillRect(x, top + h - lineH * 0.045, 1, lineH * 0.02); }
+  if (u < 0.19 || u > 0.81) return;
+  ctx.drawImage(synezScreen(performance.now()), (u - 0.19) / 0.62 * SYN_W | 0, 0, 1, SYN_H, x, top + lineH * 0.04, 1, lineH * 0.46);
+}
 
 // Distance fog for walls: alpha grows with distance (quantized so fillStyle strings are reused)
 const FOG_RATE = 0.035, FOG_MAX = 0.6, FOG_STEPS = 32;
@@ -2710,15 +2907,22 @@ const FLOOR_SRC = [
     speckle(R, rng(12), 900, ['#333331', '#41413e', '#2e2e2c', '#474744']);
     R('#2a2a28', 10, 20, 14, 1); R('#2a2a28', 23, 21, 8, 1); R('#2a2a28', 40, 50, 1, 9);
   }),
+  // 4: Synez OS shrine: black tiles with a faint glowing purple grid
+  makeTex(64, 64, (g, R) => {
+    R('#0b0714', 0, 0, 64, 64);
+    speckle(R, rng(17), 200, ['#08050f', '#120c20']);
+    R('#3a1c70', 0, 0, 64, 1); R('#3a1c70', 0, 0, 1, 64); R('#24124a', 0, 32, 64, 1); R('#24124a', 32, 0, 1, 64);
+    R('#b070ff', 0, 0, 1, 1);
+  }),
 ];
 const FLOOR_TEX = FLOOR_SRC.map(c => new Uint32Array(c.getContext('2d').getImageData(0, 0, TEX_SIZE, TEX_SIZE).data.buffer));
 
-// Which floor each map cell uses: arena, Server Room (incl. its doors), IT Closet, else office carpet
+// Which floor each map cell uses: shrine, arena, Server Room (incl. its doors), IT Closet, else office carpet
 const FLOOR_MAP = new Uint8Array(MAP_W * MAP_H);
 for (let y = 0; y < MAP_H; y++) {
   for (let x = 0; x < MAP_W; x++) {
     const i = y * MAP_W + x;
-    FLOOR_MAP[i] = ARENA[i] ? 2 : ((y >= 16 && x <= 25) || CLOSET[i]) ? 1 : (x >= 29 && y <= 9) ? 3 : 0;
+    FLOOR_MAP[i] = SHRINE[i] ? 4 : ARENA[i] ? 2 : ((y >= 16 && x <= 25) || CLOSET[i]) ? 1 : (x >= 29 && y <= 9) ? 3 : 0;
   }
 }
 
@@ -2766,7 +2970,7 @@ const CEIL_MAP = new Uint8Array(MAP_W * MAP_H);
 for (let y = 0; y < MAP_H; y++) {
   for (let x = 0; x < MAP_W; x++) {
     const i = y * MAP_W + x, f = FLOOR_MAP[i];
-    CEIL_MAP[i] = f === 2 ? 3 : f === 1 ? 2 : f === 3 ? 0 : (x % 4 === 2 && y % 3 === 1) ? 1 : 0;
+    CEIL_MAP[i] = f === 2 || f === 4 ? 3 : f === 1 ? 2 : f === 3 ? 0 : (x % 4 === 2 && y % 3 === 1) ? 1 : 0;
   }
 }
 
@@ -2839,35 +3043,40 @@ function render() {
 
   // Cast one ray per screen column
   const blink = performance.now() / RACK_BLINK_MS | 0;
-  const lift = closetHeight(), lowering = lift > 0 && lift < 1;
+  const lowering = isSinking(closetHeight()) || isSinking(secretHeight());
   const breakerLocked = !game.breakerOn && closetLeft() > 0;
   for (let x = 0; x < SCREEN_W; x++) {
     const camX = 2 * x / SCREEN_W - 1;
     const rdx = player.dirX + player.planeX * camX, rdy = player.dirY + player.planeY * camX;
     const dist = castRay(player.x, player.y, rdx, rdy, lowering);
-    // Faces looking into the monster closet (the cell in front of the hit face is closet floor) are server racks
-    const inCloset = CLOSET[raySide === 0 ? rayMapY * MAP_W + rayMapX - Math.sign(rdx) : (rayMapY - Math.sign(rdy)) * MAP_W + rayMapX];
+    // Faces looking into the monster closet (the cell in front of the hit face is closet floor) are server racks;
+    // faces looking into the shrine are its dark panels (with a logo banner on each side wall)
+    const front = raySide === 0 ? rayMapY * MAP_W + rayMapX - Math.sign(rdx) : (rayMapY - Math.sign(rdy)) * MAP_W + rayMapX;
+    const inCloset = CLOSET[front], inShrine = SHRINE[front];
     zBuf[x] = dist;
     liftZ[x] = Infinity;
-    const lDist = liftDist, lSide = liftSide, lWallX = liftWallX;
+    const lDist = liftDist, lSide = liftSide, lWallX = liftWallX, lType = liftType;
 
     const lineH = Math.floor(SCREEN_H / dist);
     const y0 = Math.max(0, HALF_H - lineH / 2 | 0);
     const y1 = Math.min(SCREEN_H - 1, HALF_H + lineH / 2 | 0);
 
     // One texture column, stretched to the wall height; side 1 (NS faces) uses the darker copy
-    const frames = inCloset ? RACK_FRAMES : WALL_TEX[rayHit] || WALL_TEX[1];
+    const frames = inCloset ? RACK_FRAMES
+                 : inShrine ? (SHRINE_BANNERS.has(rayMapY * MAP_W + rayMapX) ? BANNER_FRAMES : SHRINE_FRAMES)
+                 : WALL_TEX[rayHit] || WALL_TEX[1];
     const tex = frames[(blink + rayMapX * 7 + rayMapY * 13) % frames.length][raySide];
     ctx.drawImage(tex, rayWallX * TEX_SIZE | 0, 0, 1, TEX_SIZE, x, HALF_H - lineH / 2, 1, lineH);
     ctx.fillStyle = FOG_STYLES[Math.min(FOG_STEPS, dist * FOG_RATE / FOG_MAX * FOG_STEPS | 0)];
     ctx.fillRect(x, y0, 1, y1 - y0 + 1);
     if (DOOR_TYPES.includes(rayHit)) drawDoorColumn(x, y0, y1, lineH, rayHit);
     else if ((rayHit === SWITCH || rayHit === BREAKER) && raySide === 1 && rdy < 0) drawSwitchColumn(x, lineH, rayHit === SWITCH ? game.switchOn : game.breakerOn, rayHit === BREAKER && breakerLocked);
+    else if (rayHit === SYNEZ_SCREEN && raySide === 1 && rdy < 0) drawSynezColumn(x, lineH);
 
-    // A closet wall sinking into the floor: the top part of its texture, standing up from the floor line
+    // A closet / secret wall sinking into the floor: the top part of its texture, standing up from the floor line
     if (lDist < dist) {
-      const lh = SCREEN_H / lDist, bottom = HALF_H + lh / 2, vis = lh * lift;
-      ctx.drawImage(WALL_TEX[CLOSET_WALL][0][lSide], lWallX * TEX_SIZE | 0, 0, 1, TEX_SIZE * lift, x, bottom - vis, 1, vis);
+      const lift = liftHeight(lType), lh = SCREEN_H / lDist, bottom = HALF_H + lh / 2, vis = lh * lift;
+      ctx.drawImage(WALL_TEX[lType][0][lSide], lWallX * TEX_SIZE | 0, 0, 1, TEX_SIZE * lift, x, bottom - vis, 1, vis);
       ctx.fillStyle = FOG_STYLES[Math.min(FOG_STEPS, lDist * FOG_RATE / FOG_MAX * FOG_STEPS | 0)];
       ctx.fillRect(x, bottom - vis, 1, vis);
       liftZ[x] = lDist;
@@ -3332,6 +3541,12 @@ function drawSprites() {
   // Pickups hover gently (~2 s bob), each out of step with the others
   for (const k of pickups) list.push({ x: k.x, y: k.y, tex: PICKUPS[k.kind].tex, scale: PICKUPS[k.kind].scale,
                                      z: 0.05 + 0.035 * (0.5 + 0.5 * Math.sin(now * 0.0032 + k.x * 1.7 + k.y * 2.3)) });
+  // Shrine candles: a flickering glow (pushed first, so the candle draws over it), then the candle
+  for (const c of SHRINE_CANDLES) {
+    const fl = 0.85 + 0.15 * Math.sin(now * 0.023 + c.x * 5) * Math.sin(now * 0.037 + c.y);
+    list.push({ x: c.x, y: c.y, tex: CANDLE_GLOW, scale: 0.5 * fl, z: 0.27 - 0.25 * fl, alpha: 0.6 * fl, blend: 'lighter' });
+    list.push({ x: c.x, y: c.y, tex: CANDLE_TEX[(now / 110 + c.x * 3 | 0) % 2], scale: 0.3, z: 0 });
+  }
   for (const b of explosions) {
     const t = (now - b.t0) / EXPLOSION_MS;
     const scale = 0.4 + 0.7 * t;
@@ -3432,7 +3647,7 @@ function shadeTube(img, cx, y0, y1, hwAt, base, rand) {
 // Scratch canvas (sized for the bigger weapon) + room tint
 const WBUF_W = 104, WBUF_H = 92;
 const wbuf = makeTex(WBUF_W, WBUF_H, () => {}), wctx = wbuf.getContext('2d');
-const AREA_TINT = [null, [70, 130, 255, 0.16], [160, 70, 255, 0.22], [255, 190, 110, 0.08]]; // by FLOOR_MAP: office, Server Room, arena, IT closet
+const AREA_TINT = [null, [70, 130, 255, 0.16], [160, 70, 255, 0.22], [255, 190, 110, 0.08], [150, 60, 255, 0.26]]; // by FLOOR_MAP: office, Server Room, arena, IT closet, shrine
 const wtint = [0, 0, 0, 0];
 function blitWeapon(w, h, x, y) {
   const target = AREA_TINT[FLOOR_MAP[Math.floor(player.y) * MAP_W + Math.floor(player.x)]] || [wtint[0], wtint[1], wtint[2], 0];
@@ -4024,16 +4239,17 @@ function drawVictoryOverlay() {
       ['TICKETS CLOSED',  `${game.kills}`],
       ['TIME TO RESOLVE', fmtTime(game.endAt - game.startAt)],
       ['SLA REMAINING',   `${game.health}%`],
+      ['SECRETS',         `${game.secrets} / 1`],
       ['RANK',            victoryRank()],
     ];
     ctx.font = 'bold 12px monospace';
     rows.forEach(([k, v], i) => {
-      const y = 292 + i * 22;
+      const y = 290 + i * 20;
       ctx.textAlign = 'right';
       ctx.fillStyle = '#6a8a72';
       ctx.fillText(k, cx - 12, y);
       ctx.textAlign = 'left';
-      ctx.fillStyle = i === 3 ? '#ffe9a8' : '#e8e8e8';
+      ctx.fillStyle = k === 'RANK' ? '#ffe9a8' : '#e8e8e8';
       ctx.fillText(v, cx + 12, y);
     });
   }
@@ -4171,9 +4387,12 @@ function drawHUD() {
     ctx.fillStyle = '#e8e8e8';
     ctx.fillText(game.msg, SCREEN_W / 2, 49);
   }
-  if (game.usePrompt && !game.over) {
+  if (game.usePrompt && !game.over && game.usePrompt.type !== SECRET_WALL) {
     ctx.font = 'bold 12px monospace';
-    if (game.usePrompt.type === SWITCH) {
+    if (game.usePrompt.type === SYNEZ_SCREEN) {
+      ctx.fillStyle = '#c890ff';
+      ctx.fillText('[ E ]  CTRL + ALT + DEL', SCREEN_W / 2, HALF_H + 50);
+    } else if (game.usePrompt.type === SWITCH) {
       ctx.fillStyle = game.switchOn ? '#30ff60' : '#e8e8e8';
       ctx.fillText(game.switchOn ? 'MAIN SWITCH RESET' : '[ E ]  RESET MAIN SWITCH', SCREEN_W / 2, HALF_H + 50);
     } else if (game.usePrompt.type === BREAKER) {
@@ -4215,7 +4434,10 @@ function drawMinimap() {
   ctx.globalAlpha = 0.65;
   for (let r = 0; r < MAP_H; r++) {
     for (let c = 0; c < MAP_W; c++) {
-      ctx.fillStyle = (MAP[r][c] === SWITCH && game.switchOn) || (MAP[r][c] === BREAKER && game.breakerOn) ? '#30ff60' : MAP[r][c] > 0 ? MINIMAP_COLORS[MAP[r][c]] : '#111';
+      ctx.fillStyle = (MAP[r][c] === SWITCH && game.switchOn) || (MAP[r][c] === BREAKER && game.breakerOn) ? '#30ff60'
+                    : !secret.found && SHRINE[r * MAP_W + c] ? '#999'
+                    : MAP[r][c] === SYNEZ_SCREEN && secret.found ? '#b060ff'
+                    : MAP[r][c] > 0 ? MINIMAP_COLORS[MAP[r][c]] : '#111';
       ctx.fillRect(OX + c * S, OY + r * S, S - 1, S - 1);
     }
   }

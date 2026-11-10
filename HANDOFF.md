@@ -415,12 +415,23 @@ The user's art: `art/Character Art 1.png` (1671×941, the office on fire) and `a
 
 ---
 
+### Secret: the Synez OS shrine ✅ (not pushed yet)
+The user picked "fake wall" + "Synez OS shrine" from the easter-egg ideas and supplied the Synez OS logo (`art/synez-logo.png`, 400×400; `LOGO_CROP` cuts out the S).
+- **Where:** a 7×3 room (rows 1–3, cols 20–26) carved out of the solid block between the office and the IT Closet. The way in is **`Z` (`SECRET_WALL` = 11) at (23, 4)**, on the north side of the main east–west hallway (row 5). It looks like concrete with a hairline crack and purple light leaking out along its base. There's no "[ E ]" prompt (that would give it away), but `doorAhead()` returns it, so E within `USE_REACH` works.
+- **Opening:** `openSecret()` plays the door and rumble sounds, and the wall sinks over `SECRET_LOWER_MS` (1 s). This reuses the closet's sinking-wall rendering, now generic: `castRay` passes through `CLOSET_WALL`/`SECRET_WALL` while `liftHeight(type) < 1` and records `liftType`, and `render()` draws `WALL_TEX[lType]` at `liftHeight(lType)`. `updateSecret()` clears the cell afterwards (`flowCell = -1`).
+- **Found:** the first step onto a `SHRINE` cell (flood fill north of `Z`) shows "SECRET FOUND — THE SYNEZ OS SHRINE", plays the new synth `secret` (low swell plus a rising sine arpeggio) and does `game.secrets++`. The victory screen now lists **SECRETS n / 1** above RANK (rows 20 px apart). Until it's found, the shrine cells are drawn as wall on the minimap; afterwards the screen cell shows purple.
+- **Look:** faces looking into the shrine use `SHRINE_FRAMES` (near-black panels, a faint purple grid, a glowing trim line). The middle of each side wall (`SHRINE_BANNERS`) carries a hanging banner with the logo (`BANNER_FRAMES`, built once the logo loads). Floor index 4 is black with a purple grid, the ceiling is the arena's, and `AREA_TINT[4]` tints the weapon purple. Two candle sprites (`SHRINE_CANDLES`, `CANDLE_TEX` with a 2-frame flicker plus a `CANDLE_GLOW` additive glow) flank the screen. A Flush DNS Cache (`F`) sits in front of it as the reward.
+- **The screen** (`O`, `SYNEZ_SCREEN` = 12, at (23, 0)): `drawSynezColumn()` draws a halo, bezel, screen and power LED on its south face after the fog, so it glows. `synezScreen(now)` redraws a 160×120 canvas at most ~30 times a second in a 15 s loop (`synez.at`): boot (logo fades in, "Synez OS", spinner) → "Installing update 3 of 9,847" stuck at 99% → a purple BSOD (":(", "Stop code: WORKS_ON_MY_MACHINE") → black with a cursor → repeat. It starts booting as the wall sinks. E on the screen (prompt "[ E ] CTRL + ALT + DEL") calls `rebootSynez()`, which jumps to the reboot.
+- **Optional:** a voice line on finding it (e.g. "Synez OS... I KNEW it.") would be a new `VOICE.secret` event; not added.
+
+---
+
 ## Remaining chunks
 
 ### Next session (user's list, 2026-10-29). Not started; discuss before coding
 1. ~~Make pickups more noticeable~~ and 2. ~~Redesign the Closing Cannon pickups~~: done (see "Bigger, hovering pickups" above).
 3. ~~Weak melee fallback weapon~~: done (see "Mouse: melee fallback" above).
-4. **Secret easter-egg room**, unlocked by the player doing something. To decide: where it is (a hidden wall that slides open like Doom's secrets, behind a poster, in the office or the IT Closet), what unlocks it (pressing E on a suspicious wall, shooting something, typing a code like a cheat, flushing DNS in a certain spot, …), and what's inside (credits for the team / voice actor, bonus supplies, an IT joke), plus a "SECRET FOUND" message and sound.
+4. ~~Secret easter-egg room~~: done (see "Secret: the Synez OS shrine" above).
 5. ~~Monster closet before the boss~~: done (see "Monster closet before the boss" above).
 
 Voice clips: the first 9 are in (see above). The other events in `VOICE` still have no recordings.
