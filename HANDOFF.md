@@ -410,7 +410,7 @@ The user's art: `art/Character Art 1.png` (1671×941, the office on fire) and `a
 ---
 
 ### Victory line plays in full; no dying after the win ✅
-- Checked in the browser: `victory_1` (3.28 s) starts the moment the DNS dies and plays to the end. It has the top voice priority (9), so nothing interrupts it.
+- **The GOAT line waits for the victory screen:** `say('victory')` moved from `bossDie()` to the won branch of `update()`, `VICTORY_FADE_MS` (0.7 s) after the screen appears (`game.goatSaid`). It plays over the terminal typing, about 0.7–4.0 s into the screen, and ends before the CONNECTION ESTABLISHED chime (4.36 s) and before R restart is allowed. The DNS's death is now just the SERVFAIL scream and the explosions. It has the top voice priority (9), so nothing interrupts it; checked in the browser.
 - Fixed: a point-blank Closing Cannon kill at low health let the rocket's self-splash kill you *after* the DNS died. That meant a game over instead of the victory screen, with the victory line playing over the death screen. `hurtPlayer()` now ignores all damage once `game.boss.state === 'dead'`.
 
 ---

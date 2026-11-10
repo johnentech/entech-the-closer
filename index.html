@@ -167,7 +167,7 @@ const game = {
   started: false, // false = title screen
   startAt: 0, endAt: 0, // shift timer for the death / victory screens
   overAt: 0, killedBy: null, ticketNo: 0, resolution: '', stamped: false, // death screen
-  wonAt: 0, typed: 0, bannerShown: false,                                // victory screen
+  wonAt: 0, typed: 0, bannerShown: false, goatSaid: false,               // victory screen
   emptyAt: 0, emptyMsg: '', // out-of-ammo alert (onEmpty)
 };
 
@@ -1657,7 +1657,6 @@ function bossDie(e, now) {
   game.kills++;
   game.endAt = now;
   sfx('servfail');
-  say('victory');
   game.msgUntil = 0; // SERVFAIL gets the whole screen (drawServfail)
   // Its adds and queries die with it
   for (const a of enemies) if (a.bossAdd && a.state !== 'dead') { a.state = 'dead'; game.kills++; }
@@ -2459,6 +2458,8 @@ function update() {
     const typed = victoryTyped(t0 - game.wonAt);
     if (typed > game.typed) { game.typed = typed; sfx('type'); }
     if (!game.bannerShown && t0 - game.wonAt >= VICTORY_BANNER_AT) { game.bannerShown = true; sfx('victory'); }
+    // The GOAT line waits for the victory screen (not over the DNS's death), once it has faded in
+    if (!game.goatSaid && t0 - game.wonAt >= VICTORY_FADE_MS) { game.goatSaid = true; say('victory'); }
     return;
   }
   if (game.health <= LOW_HEALTH && t0 >= audio.upsAt) { sfx('ups'); audio.upsAt = t0 + 1400; }
