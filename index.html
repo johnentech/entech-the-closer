@@ -1913,12 +1913,11 @@ function updateCloset(now) {
   flowCell = -1;
 }
 
-// The secret wall: no prompt, just the purple glow at its base. E sinks it (and boots the Synez OS screen behind it).
+// The secret wall: no prompt, just the purple glow at its base. E sinks it.
 function openSecret() {
   if (secret.at) return;
   const now = performance.now();
   secret.at = now;
-  synez.at = now + SECRET_LOWER_MS * 0.3;
   sfx('door', SECRET_DOOR.x + 0.5, SECRET_DOOR.y + 0.5);
   sfx('rumble', SECRET_DOOR.x + 0.5, SECRET_DOOR.y + 0.5);
 }
@@ -1938,10 +1937,17 @@ function updateSecret(now) {
   }
 }
 
-// E on the shrine's screen: straight to the reboot
+// E on the shrine's screen: the first press powers it on (boot from the logo), later ones jump to the reboot
 function rebootSynez() {
-  synez.at = performance.now() - SYN_REBOOT_AT;
-  showMessage('CTRL + ALT + DEL  —  SYNEZ OS IS REBOOTING');
+  const now = performance.now();
+  if (!synez.on) {
+    synez.on = true;
+    synez.at = now;
+    showMessage('SYNEZ OS  —  POWERING ON');
+  } else {
+    synez.at = now - SYN_REBOOT_AT;
+    showMessage('CTRL + ALT + DEL  —  SYNEZ OS IS REBOOTING');
+  }
   sfx('switch');
 }
 
@@ -2800,9 +2806,9 @@ const CANDLE_GLOW = radialTex(32, [[0, 'rgba(230,170,255,0.9)'], [0.35, 'rgba(16
 
 // The screen: a 160×120 canvas redrawn (at most ~30 times a second) while it's on screen. A 15 s loop:
 // boot (logo, spinner) → "installing update 3 of 9,847" stuck at 99% → purple BSOD → black, cursor → again.
-// synez.at = when the loop started (set as the secret wall opens; E on the screen jumps to the reboot).
+// The screen is off (dark glass) until E powers it on; synez.at = when the loop started (E again jumps to the reboot).
 const SYN_W = 160, SYN_H = 120, SYN_LOOP = 15000, SYN_UPDATE_AT = 4000, SYN_BSOD_AT = 8000, SYN_REBOOT_AT = 13000;
-const synez = { at: 0, drawnAt: -1e9, c: makeTex(SYN_W, SYN_H, () => {}) };
+const synez = { on: false, at: 0, drawnAt: -1e9, c: makeTex(SYN_W, SYN_H, () => {}) };
 function synezScreen(now) {
   if (Math.abs(now - synez.drawnAt) < 33) return synez.c;
   synez.drawnAt = now;
@@ -2847,20 +2853,32 @@ function synezScreen(now) {
   return synez.c;
 }
 
-// One column of the CRT on the screen cell's south face: a purple halo on the wall, the dark bezel, the glowing
-// screen (drawn after the fog, so it stays bright from across the room) and a power LED
+// One column of the CRT on the screen cell's south face: the dark bezel and a power LED (red standby while off).
+// Powered on, a purple halo lights the wall and the screen glows (drawn after the fog, so it stays bright from
+// across the room); off, the glass is dark with a faint diagonal reflection.
 function drawSynezColumn(x, lineH) {
   const u = rayWallX;
   if (u < 0.06 || u > 0.94) return;
   const top = HALF_H - lineH * 0.4, h = lineH * 0.58;
-  ctx.fillStyle = 'rgba(150,70,255,0.2)';
-  ctx.fillRect(x, top - lineH * 0.05, 1, h + lineH * 0.1);
+  if (synez.on) {
+    ctx.fillStyle = 'rgba(150,70,255,0.2)';
+    ctx.fillRect(x, top - lineH * 0.05, 1, h + lineH * 0.1);
+  }
   if (u < 0.14 || u > 0.86) return;
   ctx.fillStyle = u < 0.16 || u > 0.84 ? '#120e18' : '#2b2535';
   ctx.fillRect(x, top, 1, h);
-  if (u > 0.74 && u < 0.78) { ctx.fillStyle = '#b070ff'; ctx.fillRect(x, top + h - lineH * 0.045, 1, lineH * 0.02); }
+  if (u > 0.74 && u < 0.78) { ctx.fillStyle = synez.on ? '#b070ff' : '#802020'; ctx.fillRect(x, top + h - lineH * 0.045, 1, lineH * 0.02); }
   if (u < 0.19 || u > 0.81) return;
-  ctx.drawImage(synezScreen(performance.now()), (u - 0.19) / 0.62 * SYN_W | 0, 0, 1, SYN_H, x, top + lineH * 0.04, 1, lineH * 0.46);
+  const sTop = top + lineH * 0.04, sH = lineH * 0.46;
+  if (synez.on) {
+    ctx.drawImage(synezScreen(performance.now()), (u - 0.19) / 0.62 * SYN_W | 0, 0, 1, SYN_H, x, sTop, 1, sH);
+    return;
+  }
+  ctx.fillStyle = '#0a0b0f';
+  ctx.fillRect(x, sTop, 1, sH);
+  const k = (u - 0.19) / 0.62, glint = 0.15 + k * 0.35; // reflection: a soft band running down-left
+  ctx.fillStyle = 'rgba(160,150,190,0.07)';
+  ctx.fillRect(x, sTop + sH * Math.max(0, glint - 0.12), 1, sH * 0.18);
 }
 
 // Distance fog for walls: alpha grows with distance (quantized so fillStyle strings are reused)
@@ -4391,7 +4409,7 @@ function drawHUD() {
     ctx.font = 'bold 12px monospace';
     if (game.usePrompt.type === SYNEZ_SCREEN) {
       ctx.fillStyle = '#c890ff';
-      ctx.fillText('[ E ]  CTRL + ALT + DEL', SCREEN_W / 2, HALF_H + 50);
+      ctx.fillText(synez.on ? '[ E ]  CTRL + ALT + DEL' : '[ E ]  POWER ON', SCREEN_W / 2, HALF_H + 50);
     } else if (game.usePrompt.type === SWITCH) {
       ctx.fillStyle = game.switchOn ? '#30ff60' : '#e8e8e8';
       ctx.fillText(game.switchOn ? 'MAIN SWITCH RESET' : '[ E ]  RESET MAIN SWITCH', SCREEN_W / 2, HALF_H + 50);
