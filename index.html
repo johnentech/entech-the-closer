@@ -1380,6 +1380,9 @@ function alertEnemies(now) {
 const LOW_HEALTH = 25;
 function hurtPlayer(dmg, srcX, srcY, cause) {
   if (game.over || game.won || dmg <= 0) return;
+  // Once the DNS is dying you've won: nothing (not even your own killing rocket's splash) can hurt you, so the
+  // victory line plays out clean and you can't die on the way to the victory screen
+  if (game.boss && game.boss.state === 'dead') return;
   const before = game.health;
   game.health = Math.max(0, game.health - dmg);
   game.hurt  = 1;

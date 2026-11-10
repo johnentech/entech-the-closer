@@ -409,6 +409,12 @@ The user's art: `art/Character Art 1.png` (1671×941, the office on fire) and `a
 
 ---
 
+### Victory line plays in full; no dying after the win ✅
+- Checked in the browser: `victory_1` (3.28 s) starts the moment the DNS dies and plays to the end. It has the top voice priority (9), so nothing interrupts it.
+- Fixed: a point-blank Closing Cannon kill at low health let the rocket's self-splash kill you *after* the DNS died. That meant a game over instead of the victory screen, with the victory line playing over the death screen. `hurtPlayer()` now ignores all damage once `game.boss.state === 'dead'`.
+
+---
+
 ## Remaining chunks
 
 ### Next session (user's list, 2026-10-29). Not started; discuss before coding
