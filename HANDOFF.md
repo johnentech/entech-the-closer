@@ -400,6 +400,15 @@ Measured by replaying `say()` against the real clip lengths: in a busy fight onl
 
 ---
 
+### Story slide + tutorial portrait ✅
+The user's art: `art/Character Art 1.png` (1671×941, the office on fire) and `art/Character Art Male.png` (1254×1254 framed portrait). Both start loading once the title art is in (`loadStoryArt()`), so they don't hold up the title. A missing file just leaves its screen showing the text.
+- **New title stage `'story'`** between `'ready'` and `'tutorial'`. The key press on the title opens it. The scene fades in on black over `STORY_FADE_MS`, 682×384 with a 4% push-in over 12 s. The caption `STORY_TEXT` types out under it (`STORY_TEXT_AT`, `STORY_CHAR_MS`) with the `type` click. A key press while it's typing finishes it (`title.skip`). Once done, "CLICK OR PRESS ANY KEY TO CONTINUE" blinks, and the next press opens the tutorial. Its clock (`storyT`) starts when the art has loaded, so a slow connection shows black, not a half-faded image.
+- **Tutorial:** the portrait (pre-shrunk to `PORTRAIT` = 104 px) sits at the top center. `TALK_TEXT` types out under it in gold (`TALK_AT`, `TALK_CHAR_MS`; done in ~3.6 s, inside the 5 s reading time). The ticket moved down to y 162–478 and widened to x 24–776; rows are tighter (controls every 27 px) so it all fits.
+- `drawTyped(text, n, cx, y, maxW, lineH)` wraps the full text first, so lines don't jump while typing, and draws a blinking cursor. The typing clicks come from `updateTitle()` (`title.typed`).
+- `syncMusic()` keeps the title riff through `'story'`. R-restart still skips the title, story and tutorial.
+
+---
+
 ## Remaining chunks
 
 ### Next session (user's list, 2026-10-29). Not started; discuss before coding
