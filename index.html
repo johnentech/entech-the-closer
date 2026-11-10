@@ -487,7 +487,7 @@ const VOICE = {
   empty_cannon: { chance: 1,   cooldown: 5000,  priority: 2, lines: [['empty_cannon_1', 'Out of closures!']] },
   // Half of kills get a quip; one at a time, so a crowd dying at once doesn't stack lines. Synez is the rare one
   // (20% by weight, ~27% with no-repeats), but always comes up within 6 quips
-  kill:        { chance: 0.5,  cooldown: 0,     priority: 1, every: 6, lines: [['kill_get_rekt', 'Get rekt!', 0.4], ['kill_haha', 'HAHA!!', 0.4], ['kill_synez', 'That guy needs Synez OS!', 0.2]] },
+  kill:        { chance: 0.5,  cooldown: 0,     priority: 1, every: 6, lines: [['kill_get_rekt', 'Get rekt!'], ['kill_haha', 'HAHA!!'], ['kill_synez', 'That guy needs Synez OS!']] },
   death:       { chance: 1,    cooldown: 0,     priority: 9, lines: [['death_1', '']] },
   victory:     { chance: 1,    cooldown: 0,     priority: 9, lines: [['victory_1', "That's why I'm the GOAT! The GOAT!!"]] },
 };

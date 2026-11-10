@@ -311,7 +311,7 @@ The voice actor's first 9 clips arrived already crunchy (8 kHz, 8-bit PCM WAV), 
 
 | Recording | File | Event / when it plays |
 |---|---|---|
-| GET REKT / HAHA / SYNEZ | `kill_get_rekt`, `kill_haha`, `kill_synez` | `kill`: 50% of kills get a quip, weighted 40 / 40 / 20 |
+| GET REKT / HAHA / SYNEZ | `kill_get_rekt`, `kill_haha`, `kill_synez` | `kill`: 50% of kills get a quip, equal odds (1 in 3 each; was 40 / 40 / 20) |
 | DAMAGE / DAMAGE 2 | `hurt_1`, `hurt_2` | `hurt`: every hit, 50/50 |
 | BOSS ENCOUNTER | `boss_intro_1` | `boss_intro`: 700 ms after the DNS spawns |
 | VICTORY | `victory_1` | `victory`: now fires in `bossDie()` (the moment it dies), no longer at the banner |

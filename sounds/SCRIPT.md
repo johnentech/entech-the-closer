@@ -133,9 +133,9 @@ Half of kills get a quip, picked by weight, never the same one twice in a row; S
 
 | File | Weight | Line |
 |---|---|---|
-| `kill_get_rekt` | 40% | "Get rekt!" |
-| `kill_haha` | 40% | "HAHA!!" |
-| `kill_synez` | 20% | "That guy needs Synez OS!" |
+| `kill_get_rekt` | 1 in 3 | "Get rekt!" |
+| `kill_haha` | 1 in 3 | "HAHA!!" |
+| `kill_synez` | 1 in 3 | "That guy needs Synez OS!" |
 
 ### Death ✅ *recorded*
 | File | Line |
